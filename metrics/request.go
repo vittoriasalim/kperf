@@ -12,14 +12,15 @@ type ResponseMetric interface {
 	// ObserveLatency observes latency.
 	ObserveLatency(seconds float64)
 	// ObserveFailure observes failure response.
-	ObserveFailure()
+	ObserveFailure(err error)
 	// Gather returns the summary.
-	Gather() (latencies map[float64]float64, failure int, _ error)
+	Gather() (latencies map[float64]float64, failure int, _ error, failureList []error)
 }
 
 type responseMetricImpl struct {
 	latencySeconds *prometheus.SummaryVec
 	failureCount   int64
+	failureList    []error
 }
 
 func NewResponseMetric() ResponseMetric {
@@ -32,6 +33,7 @@ func NewResponseMetric() ResponseMetric {
 			},
 			[]string{},
 		),
+		failureList: []error{},
 	}
 }
 
@@ -41,18 +43,23 @@ func (m *responseMetricImpl) ObserveLatency(seconds float64) {
 }
 
 // ObserveFailure implements ResponseMetric.
-func (m *responseMetricImpl) ObserveFailure() {
+func (m *responseMetricImpl) ObserveFailure(err error) {
+	//TODO: add err to failure list
+	fmt.Println("error parameter, before adding to failureList: ", err)
+	m.failureList = append(m.failureList, err)
 	atomic.AddInt64(&m.failureCount, 1)
+	fmt.Println("Updated failureList ", m.failureList)
 }
 
 // Gather implements ResponseMetric.
-func (m *responseMetricImpl) Gather() (map[float64]float64, int, error) {
+func (m *responseMetricImpl) Gather() (map[float64]float64, int, error, []error) {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(m.latencySeconds)
 
+	failureList := m.failureList
 	metricFamilies, err := reg.Gather()
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to gather from local registry: %w", err)
+		return nil, 0, fmt.Errorf("failed to gather from local registry: %w", err), failureList
 	}
 
 	latencies := map[float64]float64{}
@@ -60,5 +67,5 @@ func (m *responseMetricImpl) Gather() (map[float64]float64, int, error) {
 		latencies[q.GetQuantile()] = q.GetValue()
 	}
 
-	return latencies, int(atomic.LoadInt64(&m.failureCount)), nil
+	return latencies, int(atomic.LoadInt64(&m.failureCount)), nil, failureList
 }

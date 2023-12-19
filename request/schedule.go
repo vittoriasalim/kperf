@@ -65,7 +65,7 @@ func Schedule(ctx context.Context, spec *types.LoadProfileSpec, restCli []rest.I
 						_, err = io.Copy(io.Discard, respBody)
 					}
 					if err != nil {
-						respMetric.ObserveFailure()
+						respMetric.ObserveFailure(err)
 					}
 				}()
 			}
@@ -80,14 +80,15 @@ func Schedule(ctx context.Context, spec *types.LoadProfileSpec, restCli []rest.I
 
 	totalDuration := time.Since(start)
 
-	latencies, failures, err := respMetric.Gather()
+	latencies, failures, err, failureList := respMetric.Gather()
 	if err != nil {
 		return nil, err
 	}
 	return &types.ResponseStats{
-		Total:     spec.Total,
-		Failures:  failures,
-		Duration:  totalDuration,
-		Latencies: latencies,
+		Total:       spec.Total,
+		Failures:    failures,
+		FailureList: failureList,
+		Duration:    totalDuration,
+		Latencies:   latencies,
 	}, nil
 }
