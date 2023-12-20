@@ -45,10 +45,8 @@ func (m *responseMetricImpl) ObserveLatency(seconds float64) {
 // ObserveFailure implements ResponseMetric.
 func (m *responseMetricImpl) ObserveFailure(err error) {
 	//TODO: add err to failure list
-	fmt.Println("error parameter, before adding to failureList: ", err)
 	m.failureList = append(m.failureList, err)
 	atomic.AddInt64(&m.failureCount, 1)
-	fmt.Println("Updated failureList ", m.failureList)
 }
 
 // Gather implements ResponseMetric.
