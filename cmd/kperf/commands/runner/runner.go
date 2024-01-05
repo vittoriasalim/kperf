@@ -2,16 +2,19 @@ package runner
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 
 	"github.com/Azure/kperf/api/types"
 	"github.com/Azure/kperf/request"
 
 	"github.com/urfave/cli"
 	"gopkg.in/yaml.v2"
+	"k8s.io/klog/v2"
 )
 
 // Command represents runner subcommand.
@@ -68,8 +71,19 @@ var runCommand = cli.Command{
 			Name:  "result",
 			Usage: "Path to the file which stores results",
 		},
+		cli.IntFlag{
+			Name:  "v",
+			Usage: "set log level verbosity",
+			Value: 0,
+		},
 	},
 	Action: func(cliCtx *cli.Context) error {
+		// initialize klog
+		klog.InitFlags(nil)
+		flag.Set("v", strconv.Itoa(cliCtx.Int("v")))
+		defer klog.Flush()
+		flag.Parse()
+
 		profileCfg, err := loadConfig(cliCtx)
 		if err != nil {
 			return err
@@ -95,10 +109,16 @@ var runCommand = cli.Command{
 
 		var f *os.File = os.Stdout
 		if outputFilePath != "" {
-			err := os.MkdirAll(filepath.Dir(outputFilePath), 0600)
-			if err != nil {
-				return err
+			outputFileDir := filepath.Dir(outputFilePath)
+
+			_, err = os.Stat(outputFileDir)
+			if err != nil && os.IsNotExist(err) {
+				err = os.MkdirAll(outputFileDir, 0750)
 			}
+			if err != nil {
+				return fmt.Errorf("failed to ensure output's dir %s: %w", outputFileDir, err)
+			}
+
 			f, err = os.Create(outputFilePath)
 			if err != nil {
 				return err
