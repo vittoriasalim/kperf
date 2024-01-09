@@ -2,10 +2,13 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"time"
 
 	"github.com/Azure/kperf/api/types"
 	"github.com/Azure/kperf/request"
@@ -68,6 +71,10 @@ var runCommand = cli.Command{
 			Name:  "result",
 			Usage: "Path to the file which stores results",
 		},
+		cli.BoolFlag{
+			Name:  "raw-data",
+			Usage: "Exports raw data as .json to specified file",
+		},
 	},
 	Action: func(cliCtx *cli.Context) error {
 		profileCfg, err := loadConfig(cliCtx)
@@ -80,6 +87,7 @@ var runCommand = cli.Command{
 		kubeCfgPath := cliCtx.String("kubeconfig")
 		userAgent := cliCtx.String("user-agent")
 		outputFilePath := cliCtx.String("result")
+		rawData := cliCtx.Bool("raw-data")
 
 		conns := profileCfg.Spec.Conns
 		rate := profileCfg.Spec.Rate
@@ -111,7 +119,7 @@ var runCommand = cli.Command{
 			}
 			defer f.Close()
 		}
-		printResponseStats(f, stats)
+		printResponseStats(f, stats, rawData)
 		return nil
 	},
 }
@@ -151,33 +159,64 @@ func loadConfig(cliCtx *cli.Context) (*types.LoadProfile, error) {
 	return &profileCfg, nil
 }
 
-func printResponseStats(f *os.File, stats *types.ResponseStats) {
-	fmt.Fprint(f, "Response Stat: \n")
-	fmt.Fprintf(f, "  Total: %v\n", stats.Total)
+func printResponseStats(f *os.File, stats *types.ResponseStats, rawData bool) {
 
-	fmt.Fprintf(f, "  Total Failures: %d\n", len(stats.FailureList))
+	copy := ResponseStatsCopy{}
+	copy.Total = stats.Total
+	copy.FailureList = stats.FailureList
+	copy.TotalReceivedBytes = stats.TotalReceivedBytes
+	copy.Duration = stats.Duration
 
-	for _, v := range stats.FailureList {
-		fmt.Fprintf(f, "	%v\n", v)
+	copy.PercentileLatencies = make(map[string]string)
+	for i, v := range stats.PercentileLatencies {
+		iCopy := strconv.FormatFloat(i, 'f', 2, 64)
+		copy.PercentileLatencies[iCopy] = strconv.FormatFloat(v, 'f', 3, 64)
 	}
 
-	fmt.Fprintf(f, "  Observed Bytes: %v\n", stats.TotalReceivedBytes)
+	if rawData {
+		b, err := json.MarshalIndent(copy, "", " ")
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Fprint(f, string(b))
+	} else {
+		fmt.Fprint(f, "Response Stat: \n")
+		fmt.Fprintf(f, "  Total: %v\n", stats.Total)
 
-	fmt.Fprintf(f, "  Duration: %v\n", stats.Duration.String())
+		fmt.Fprintf(f, "  Total Failures: %d\n", len(stats.FailureList))
 
-	requestsPerSec := float64(stats.Total) / stats.Duration.Seconds()
+		for _, v := range stats.FailureList {
+			fmt.Fprintf(f, "	%v\n", v)
+		}
 
-	fmt.Fprintf(f, "  Requests/sec: %.2f\n", requestsPerSec)
+		fmt.Fprintf(f, "  Observed Bytes: %v\n", stats.TotalReceivedBytes)
 
-	fmt.Fprint(f, "  Latency Distribution:\n")
-	keys := make([]float64, 0, len(stats.PercentileLatencies))
-	for q := range stats.PercentileLatencies {
-		keys = append(keys, q)
+		fmt.Fprintf(f, "  Duration: %v\n", stats.Duration.String())
+
+		requestsPerSec := float64(stats.Total) / stats.Duration.Seconds()
+
+		fmt.Fprintf(f, "  Requests/sec: %.2f\n", requestsPerSec)
+
+		fmt.Fprint(f, "  Latency Distribution:\n")
+		keys := make([]float64, 0, len(stats.PercentileLatencies))
+		for q := range stats.PercentileLatencies {
+			keys = append(keys, q)
+		}
+
+		sort.Float64s(keys)
+
+		for _, q := range keys {
+			fmt.Fprintf(f, "    [%.2f] %.3fs\n", q/100.0, stats.PercentileLatencies[q])
+		}
 	}
 
-	sort.Float64s(keys)
+}
 
-	for _, q := range keys {
-		fmt.Fprintf(f, "    [%.2f] %.3fs\n", q/100.0, stats.PercentileLatencies[q])
-	}
+type ResponseStatsCopy struct {
+	Total               int
+	FailureList         []error
+	TotalReceivedBytes  int64
+	Duration            time.Duration
+	PercentileLatencies map[string]string
 }
