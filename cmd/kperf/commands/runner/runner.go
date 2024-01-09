@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
-	"time"
 
 	"github.com/Azure/kperf/api/types"
 	"github.com/Azure/kperf/request"
@@ -160,26 +159,46 @@ func loadConfig(cliCtx *cli.Context) (*types.LoadProfile, error) {
 }
 
 func printResponseStats(f *os.File, stats *types.ResponseStats, rawData bool) {
-
-	copy := ResponseStatsCopy{}
-	copy.Total = stats.Total
-	copy.FailureList = stats.FailureList
-	copy.TotalReceivedBytes = stats.TotalReceivedBytes
-	copy.Duration = stats.Duration
-
-	copy.PercentileLatencies = make(map[string]string)
+	percentileLatencies := make(map[string]string)
 	for i, v := range stats.PercentileLatencies {
 		iCopy := strconv.FormatFloat(i, 'f', 2, 64)
-		copy.PercentileLatencies[iCopy] = strconv.FormatFloat(v, 'f', 3, 64)
+		percentileLatencies[iCopy] = strconv.FormatFloat(v, 'f', 3, 64)
 	}
 
 	if rawData {
-		b, err := json.MarshalIndent(copy, "", " ")
+		total, err := json.MarshalIndent(stats.Total, "", " ")
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
-		fmt.Fprint(f, string(b))
+		fList, err := json.MarshalIndent(stats.FailureList, "", " ")
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		bytes, err := json.MarshalIndent(stats.TotalReceivedBytes, "", " ")
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		duration, err := json.MarshalIndent(stats.Duration, "", " ")
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		pLatencies, err := json.MarshalIndent(percentileLatencies, "", " ")
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Fprint(f, "{\n")
+		fmt.Fprintf(f, " \"Total\": %s,\n", string(total))
+		fmt.Fprintf(f, " \"Failure List\": %s,\n", string(fList))
+		fmt.Fprintf(f, " \"Total Received Bytes\":%s,\n", string(bytes))
+		fmt.Fprintf(f, " \"Duration\":%s,\n", string(duration))
+		fmt.Fprintf(f, " \"Percentile Latencies\":%s,\n", pLatencies)
+		fmt.Fprint(f, "}")
+
 	} else {
 		fmt.Fprint(f, "Response Stat: \n")
 		fmt.Fprintf(f, "  Total: %v\n", stats.Total)
@@ -211,12 +230,4 @@ func printResponseStats(f *os.File, stats *types.ResponseStats, rawData bool) {
 		}
 	}
 
-}
-
-type ResponseStatsCopy struct {
-	Total               int
-	FailureList         []error
-	TotalReceivedBytes  int64
-	Duration            time.Duration
-	PercentileLatencies map[string]string
 }
