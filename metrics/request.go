@@ -6,6 +6,8 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+
+	"github.com/Azure/kperf/api/types"
 )
 
 // ResponseMetric is a measurement related to http response.
@@ -17,7 +19,7 @@ type ResponseMetric interface {
 	// ObserveReceivedBytes observes the bytes read from apiserver.
 	ObserveReceivedBytes(bytes int64)
 	// Gather returns the summary.
-	Gather() (latencies []float64, percentileLatencies map[float64]float64, failureList []error, bytes int64)
+	Gather() types.ResponseStats
 }
 
 type responseMetricImpl struct {
@@ -55,9 +57,14 @@ func (m *responseMetricImpl) ObserveReceivedBytes(bytes int64) {
 }
 
 // Gather implements ResponseMetric.
-func (m *responseMetricImpl) Gather() ([]float64, map[float64]float64, []error, int64) {
+func (m *responseMetricImpl) Gather() types.ResponseStats {
 	latencies := m.dumpLatencies()
-	return latencies, buildPercentileLatencies(latencies), m.failureList, atomic.LoadInt64(&m.receivedBytes)
+	return types.ResponseStats{
+		FailureList:        m.failureList,
+		Latencies:          latencies,
+		TotalReceivedBytes: atomic.LoadInt64(&m.receivedBytes),
+	}
+	//return latencies, buildPercentileLatencies(latencies), m.failureList, atomic.LoadInt64(&m.receivedBytes)
 }
 
 func (m *responseMetricImpl) dumpLatencies() []float64 {
