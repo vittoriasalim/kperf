@@ -67,10 +67,6 @@ var runCommand = cli.Command{
 			Name:  "result",
 			Usage: "Path to the file which stores results",
 		},
-		cli.BoolFlag{
-			Name:  "raw-data",
-			Usage: "Exports raw data as .json to specified file",
-		},
 	},
 	Action: func(cliCtx *cli.Context) error {
 		profileCfg, err := loadConfig(cliCtx)
@@ -83,7 +79,6 @@ var runCommand = cli.Command{
 		kubeCfgPath := cliCtx.String("kubeconfig")
 		userAgent := cliCtx.String("user-agent")
 		outputFilePath := cliCtx.String("result")
-		//rawData := cliCtx.Bool("raw-data")
 
 		conns := profileCfg.Spec.Conns
 		rate := profileCfg.Spec.Rate
@@ -159,5 +154,5 @@ func loadConfig(cliCtx *cli.Context) (*types.LoadProfile, error) {
 
 // TODO: Complete this function
 func printResponseStats(f *os.File, stats *request.Result) {
-
+	fmt.Fprint(f, "Response Stat: \n")
 }

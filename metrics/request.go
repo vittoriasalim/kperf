@@ -2,8 +2,6 @@ package metrics
 
 import (
 	"container/list"
-	"math"
-	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -64,7 +62,6 @@ func (m *responseMetricImpl) Gather() types.ResponseStats {
 		Latencies:          latencies,
 		TotalReceivedBytes: atomic.LoadInt64(&m.receivedBytes),
 	}
-	//return latencies, buildPercentileLatencies(latencies), m.failureList, atomic.LoadInt64(&m.receivedBytes)
 }
 
 func (m *responseMetricImpl) dumpLatencies() []float64 {
@@ -73,27 +70,6 @@ func (m *responseMetricImpl) dumpLatencies() []float64 {
 	res := make([]float64, 0, m.latencies.Len())
 	for e := m.latencies.Front(); e != nil; e = e.Next() {
 		res = append(res, e.Value.(float64))
-	}
-	return res
-}
-
-var percentiles = []float64{0, 50, 90, 95, 99, 100}
-
-func buildPercentileLatencies(latencies []float64) map[float64]float64 {
-	if len(latencies) == 0 {
-		return nil
-	}
-
-	res := make(map[float64]float64, len(percentiles))
-
-	n := len(latencies)
-	sort.Float64s(latencies)
-	for _, p := range percentiles {
-		idx := int(math.Ceil(float64(n) * p / 100))
-		if idx > 0 {
-			idx--
-		}
-		res[p] = latencies[idx]
 	}
 	return res
 }
