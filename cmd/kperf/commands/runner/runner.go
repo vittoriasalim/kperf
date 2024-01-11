@@ -170,23 +170,11 @@ func printResponseStats(f *os.File, rawDataFlagIncluded bool, stats *request.Res
 		Latencies:          stats.Latencies,
 		TotalReceivedBytes: stats.TotalReceivedBytes,
 	}
-	if rawDataFlagIncluded {
-		output.Latencies = nil
-	}
 
 	encoder := json.NewEncoder(f)
 	err := encoder.Encode(output)
 	if err != nil {
 		return fmt.Errorf("failed to encode json: %w", err)
-	}
-
-	indentedJson, err := json.MarshalIndent(output, "", "    ")
-	if err != nil {
-		panic(err)
-	}
-	_, err = f.Write(indentedJson)
-	if err != nil {
-		return fmt.Errorf("failed to write indented json to file: %w", err)
 	}
 
 	return nil
