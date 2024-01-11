@@ -121,6 +121,7 @@ var runCommand = cli.Command{
 		if err != nil {
 			return fmt.Errorf("error while printing response stats: %w", err)
 		}
+
 		return nil
 	},
 }
@@ -189,5 +190,4 @@ func printResponseStats(f *os.File, rawDataFlagIncluded bool, stats *request.Res
 	}
 
 	return nil
-
 }
