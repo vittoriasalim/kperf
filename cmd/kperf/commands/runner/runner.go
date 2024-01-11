@@ -154,5 +154,5 @@ func loadConfig(cliCtx *cli.Context) (*types.LoadProfile, error) {
 
 // TODO: Complete this function
 func printResponseStats(f *os.File, stats *request.Result) {
-	fmt.Fprint(f, "Response Stat: \n")
+	fmt.Fprintf(f, "Response Stat: %v\n", stats)
 }
