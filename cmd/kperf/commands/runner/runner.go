@@ -2,19 +2,15 @@ package runner
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 
 	"github.com/Azure/kperf/api/types"
 	"github.com/Azure/kperf/request"
 
 	"github.com/urfave/cli"
 	"gopkg.in/yaml.v2"
-	"k8s.io/klog/v2"
 )
 
 // Command represents runner subcommand.
@@ -71,19 +67,8 @@ var runCommand = cli.Command{
 			Name:  "result",
 			Usage: "Path to the file which stores results",
 		},
-		cli.IntFlag{
-			Name:  "v",
-			Usage: "set log level verbosity",
-			Value: 0,
-		},
 	},
 	Action: func(cliCtx *cli.Context) error {
-		// initialize klog
-		klog.InitFlags(nil)
-		flag.Set("v", strconv.Itoa(cliCtx.Int("v")))
-		defer klog.Flush()
-		flag.Parse()
-
 		profileCfg, err := loadConfig(cliCtx)
 		if err != nil {
 			return err
@@ -125,6 +110,8 @@ var runCommand = cli.Command{
 			}
 			defer f.Close()
 		}
+
+		//TODO: add printResponseStats for .json format
 		printResponseStats(f, stats)
 		return nil
 	},
@@ -165,33 +152,7 @@ func loadConfig(cliCtx *cli.Context) (*types.LoadProfile, error) {
 	return &profileCfg, nil
 }
 
-func printResponseStats(f *os.File, stats *types.ResponseStats) {
-	fmt.Fprint(f, "Response Stat: \n")
-	fmt.Fprintf(f, "  Total: %v\n", stats.Total)
-
-	fmt.Fprintf(f, "  Total Failures: %d\n", len(stats.FailureList))
-
-	for _, v := range stats.FailureList {
-		fmt.Fprintf(f, "	%v\n", v)
-	}
-
-	fmt.Fprintf(f, "  Observed Bytes: %v\n", stats.TotalReceivedBytes)
-
-	fmt.Fprintf(f, "  Duration: %v\n", stats.Duration.String())
-
-	requestsPerSec := float64(stats.Total) / stats.Duration.Seconds()
-
-	fmt.Fprintf(f, "  Requests/sec: %.2f\n", requestsPerSec)
-
-	fmt.Fprint(f, "  Latency Distribution:\n")
-	keys := make([]float64, 0, len(stats.PercentileLatencies))
-	for q := range stats.PercentileLatencies {
-		keys = append(keys, q)
-	}
-
-	sort.Float64s(keys)
-
-	for _, q := range keys {
-		fmt.Fprintf(f, "    [%.2f] %.3fs\n", q/100.0, stats.PercentileLatencies[q])
-	}
+// TODO: Complete this function
+func printResponseStats(f *os.File, stats *request.Result) {
+	fmt.Fprintf(f, "Response Stat: %v\n", stats)
 }

@@ -1,4 +1,4 @@
-name: "vc-testing"
+name: ""
 controllerNodeSelectors: {}
 replicas: 0
 nodeLabels: {}

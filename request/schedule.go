@@ -12,13 +12,21 @@ import (
 
 	"golang.org/x/time/rate"
 	"k8s.io/client-go/rest"
-	"k8s.io/klog/v2"
 )
 
 const defaultTimeout = 60 * time.Second
 
+// Result contains responseStats vlaues from Gather() and adds Duration and Total values separately
+type Result struct {
+	types.ResponseStats
+	// Duration means the time of benchmark.
+	Duration time.Duration
+	// Total means the total number of requests.
+	Total int
+}
+
 // Schedule files requests to apiserver based on LoadProfileSpec.
-func Schedule(ctx context.Context, spec *types.LoadProfileSpec, restCli []rest.Interface) (*types.ResponseStats, error) {
+func Schedule(ctx context.Context, spec *types.LoadProfileSpec, restCli []rest.Interface) (*Result, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -47,10 +55,7 @@ func Schedule(ctx context.Context, spec *types.LoadProfileSpec, restCli []rest.I
 			for builder := range reqBuilderCh {
 				_, req := builder.Build(cli)
 
-				klog.V(9).Infof("Request URL: %s", req.URL())
-
 				if err := limiter.Wait(ctx); err != nil {
-					klog.V(9).Infof("Rate limiter wait failed: %v", err)
 					cancel()
 					return
 				}
@@ -72,7 +77,6 @@ func Schedule(ctx context.Context, spec *types.LoadProfileSpec, restCli []rest.I
 
 					if err != nil {
 						respMetric.ObserveFailure(err)
-						klog.V(9).Infof("Request stream failed: %v", err)
 					}
 				}()
 			}
@@ -86,12 +90,10 @@ func Schedule(ctx context.Context, spec *types.LoadProfileSpec, restCli []rest.I
 	wg.Wait()
 
 	totalDuration := time.Since(start)
-	_, percentileLatencies, failureList, bytes := respMetric.Gather()
-	return &types.ResponseStats{
-		Total:               spec.Total,
-		FailureList:         failureList,
-		Duration:            totalDuration,
-		TotalReceivedBytes:  bytes,
-		PercentileLatencies: percentileLatencies,
+	responseStats := respMetric.Gather()
+	return &Result{
+		ResponseStats: responseStats,
+		Duration:      totalDuration,
+		Total:         spec.Total,
 	}, nil
 }
