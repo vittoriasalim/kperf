@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -67,6 +68,10 @@ var runCommand = cli.Command{
 			Name:  "result",
 			Usage: "Path to the file which stores results",
 		},
+		cli.BoolFlag{
+			Name:  "raw-data",
+			Usage: "write ResponseStats to file in .json format",
+		},
 	},
 	Action: func(cliCtx *cli.Context) error {
 		profileCfg, err := loadConfig(cliCtx)
@@ -79,6 +84,7 @@ var runCommand = cli.Command{
 		kubeCfgPath := cliCtx.String("kubeconfig")
 		userAgent := cliCtx.String("user-agent")
 		outputFilePath := cliCtx.String("result")
+		rawDataFlagIncluded := cliCtx.Bool("result")
 
 		conns := profileCfg.Spec.Conns
 		rate := profileCfg.Spec.Rate
@@ -111,8 +117,10 @@ var runCommand = cli.Command{
 			defer f.Close()
 		}
 
-		//TODO: add printResponseStats for .json format
-		printResponseStats(f, stats)
+		err = printResponseStats(f, rawDataFlagIncluded, stats)
+		if err != nil {
+			return fmt.Errorf("error while printing response stats: %w", err)
+		}
 		return nil
 	},
 }
@@ -152,7 +160,34 @@ func loadConfig(cliCtx *cli.Context) (*types.LoadProfile, error) {
 	return &profileCfg, nil
 }
 
-// TODO: Complete this function
-func printResponseStats(f *os.File, stats *request.Result) {
-	fmt.Fprintf(f, "Response Stat: %v\n", stats)
+func printResponseStats(f *os.File, rawDataFlagIncluded bool, stats *request.Result) error {
+
+	output := types.RunnerMetricReport{
+		Total:              stats.Total,
+		FailureList:        stats.FailureList,
+		Duration:           stats.Duration,
+		Latencies:          stats.Latencies,
+		TotalReceivedBytes: stats.TotalReceivedBytes,
+	}
+	if rawDataFlagIncluded {
+		output.Latencies = nil
+	}
+
+	encoder := json.NewEncoder(f)
+	err := encoder.Encode(output)
+	if err != nil {
+		return fmt.Errorf("failed to encode json: %w", err)
+	}
+
+	indentedJson, err := json.MarshalIndent(output, "", "    ")
+	if err != nil {
+		panic(err)
+	}
+	_, err = f.Write(indentedJson)
+	if err != nil {
+		return fmt.Errorf("failed to write indented json to file: %w", err)
+	}
+
+	return nil
+
 }
