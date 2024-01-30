@@ -69,6 +69,7 @@ var runCommand = cli.Command{
 		}
 
 		kubeCfgPath := cliCtx.GlobalString("kubeconfig")
+
 		return runner.CreateRunnerGroupServer(context.Background(),
 			kubeCfgPath,
 			imgRef,

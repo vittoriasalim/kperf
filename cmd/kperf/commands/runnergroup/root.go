@@ -26,3 +26,8 @@ var Command = cli.Command{
 		statusCommand,
 	},
 }
+
+// debuLog function to log messages using klog.
+func debugLog(level klog.Level, format string, args ...interface{}) {
+	klog.V(level).Infof(format, args...)
+}
