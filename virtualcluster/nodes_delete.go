@@ -27,10 +27,15 @@ func DeleteNodepool(_ context.Context, kubeconfigPath string, nodepoolName strin
 		return fmt.Errorf("failed to create helm delete client: %w", err)
 	}
 
-	// delete virtual node controller first
+	err = delCli.Delete(cfg.nodeHelmReleaseName())
+	if err != nil && !errors.Is(err, driver.ErrReleaseNotFound) {
+		return fmt.Errorf("failed to cleanup virtual nodes: %w", err)
+	}
+
 	err = delCli.Delete(cfg.nodeControllerHelmReleaseName())
 	if err != nil && !errors.Is(err, driver.ErrReleaseNotFound) {
 		return fmt.Errorf("failed to cleanup virtual node controller: %w", err)
 	}
-	return delCli.Delete(cfg.nodeHelmReleaseName())
+
+	return nil
 }
