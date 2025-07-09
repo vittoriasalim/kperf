@@ -164,8 +164,11 @@ func (b *requestGetBuilder) Build(cli rest.Interface) Requester {
 	comps := make([]string, 0, 5)
 	if b.version.Group == "" {
 		comps = append(comps, "api", b.version.Version)
-	} else {
+} else {
 		comps = append(comps, "apis", b.version.Group, b.version.Version)
+	}
+	if b.namespace != "" {
+		comps = append(comps, "namespaces", b.namespace)
 	}
 	comps = append(comps, b.resource, b.name)
 

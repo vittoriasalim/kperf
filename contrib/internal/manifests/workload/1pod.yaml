@@ -1,0 +1,25 @@
+# SLI Read-Only staleget pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: p1
+  labels:
+    app: fake-pod
+spec:
+  restartPolicy: Never
+  containers:
+  - name: fake-container
+    image: fake-image
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+            - key: type
+              operator: In
+              values:
+              - kperf-virtualnodes
+  tolerations:
+  - key: "kperf.io/nodepool"
+    operator: "Exists"
+    effect: "NoSchedule"
