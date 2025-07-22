@@ -3,7 +3,11 @@
 
 package types
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
 
 // ContentType represents the format of response.
 type ContentType string
@@ -87,6 +91,8 @@ type WeightedRequest struct {
 	QuorumGet *RequestGet `json:"quorumGet,omitempty" yaml:"quorumGet,omitempty"`
 	// Put means this is mutating request.
 	Put *RequestPut `json:"put,omitempty" yaml:"put,omitempty"`
+	// Patch means this is mutating request to update resource.
+	Patch *RequestPatch `json:"patch,omitempty" yaml:"patch,omitempty"`
 	// GetPodLog means this is to get log from target pod.
 	GetPodLog *RequestGetPodLog `json:"getPodLog,omitempty" yaml:"getPodLog,omitempty"`
 }
@@ -144,6 +150,19 @@ type RequestPut struct {
 	KeySpaceSize int `json:"keySpaceSize" yaml:"keySpaceSize"`
 	// ValueSize is the object's size in bytes.
 	ValueSize int `json:"valueSize" yaml:"valueSize"`
+}
+
+// RequestPatch defines PATCH request for target resource type.
+type RequestPatch struct {
+	KubeGroupVersionResource `yaml:",inline"`
+	// Namespace is object's namespace.
+	Namespace string `json:"namespace" yaml:"namespace"`
+	// Name is object's prefix name.
+	Name string `json:"name" yaml:"name"`
+	// PatchType is the type of patch, e.g. "json", "merge", "strategic-merge".
+	PatchType string `json:"patchType" yaml:"patchType"`
+	// Body is the request body, for fields to be changed.
+	Body string `json:"body" yaml:"body"`
 }
 
 // RequestGetPodLog defines GetLog request for target pod.
@@ -221,6 +240,8 @@ func (r WeightedRequest) Validate() error {
 		return r.QuorumGet.Validate()
 	case r.Put != nil:
 		return r.Put.Validate()
+	case r.Patch != nil:
+		return r.Patch.Validate()
 	case r.GetPodLog != nil:
 		return r.GetPodLog.Validate()
 	default:
@@ -302,5 +323,40 @@ func (m *KubeGroupVersionResource) Validate() error {
 	if m.Resource == "" {
 		return fmt.Errorf("resource is required")
 	}
+	return nil
+}
+
+var PatchTypeMapping = map[string]string{
+	"json":            "application/json-patch+json",            // RFC 6902 JSON Patch
+	"merge":           "application/merge-patch+json",           // RFC 7396 JSON Merge Patch
+	"strategic-merge": "application/strategic-merge-patch+json", // Kubernetes Strategic Merge
+}
+
+// Validate validates RequestPatch type.
+func (r *RequestPatch) Validate() error {
+	if err := r.KubeGroupVersionResource.Validate(); err != nil {
+		return fmt.Errorf("kube metadata: %v", err)
+	}
+	if r.Name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if r.Body == "" {
+		return fmt.Errorf("body is required")
+	}
+
+	// Validate patch type
+	_, ok := PatchTypeMapping[r.PatchType]
+	if !ok {
+		return fmt.Errorf("unknown patch type: %s (valid types: json, merge, strategic-merge)", r.PatchType)
+	}
+
+	// Validate JSON body and trim it
+	trimmed := strings.TrimSpace(r.Body)
+	if !json.Valid([]byte(trimmed)) {
+		return fmt.Errorf("invalid JSON in patch body: %q", r.Body)
+	}
+
+	r.Body = trimmed // Store the trimmed body
+
 	return nil
 }
