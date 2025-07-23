@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	apitypes "k8s.io/apimachinery/pkg/types"
 )
 
 // ContentType represents the format of response.
@@ -326,10 +328,19 @@ func (m *KubeGroupVersionResource) Validate() error {
 	return nil
 }
 
-var PatchTypeMapping = map[string]string{
-	"json":            "application/json-patch+json",            // RFC 6902 JSON Patch
-	"merge":           "application/merge-patch+json",           // RFC 7396 JSON Merge Patch
-	"strategic-merge": "application/strategic-merge-patch+json", // Kubernetes Strategic Merge
+// GetPatchType returns the Kubernetes PatchType for a given patch type string.
+// Returns the PatchType and an error if the patch type is invalid.
+func GetPatchType(patchType string) (apitypes.PatchType, bool) {
+	switch patchType {
+	case "json":
+		return apitypes.JSONPatchType, true
+	case "merge":
+		return apitypes.MergePatchType, true
+	case "strategic-merge":
+		return apitypes.StrategicMergePatchType, true
+	default:
+		return "", false
+	}
 }
 
 // Validate validates RequestPatch type.
@@ -345,7 +356,7 @@ func (r *RequestPatch) Validate() error {
 	}
 
 	// Validate patch type
-	_, ok := PatchTypeMapping[r.PatchType]
+	_, ok := GetPatchType(r.PatchType)
 	if !ok {
 		return fmt.Errorf("unknown patch type: %s (valid types: json, merge, strategic-merge)", r.PatchType)
 	}
