@@ -97,6 +97,8 @@ type WeightedRequest struct {
 	Patch *RequestPatch `json:"patch,omitempty" yaml:"patch,omitempty"`
 	// GetPodLog means this is to get log from target pod.
 	GetPodLog *RequestGetPodLog `json:"getPodLog,omitempty" yaml:"getPodLog,omitempty"`
+	// PostDelete means this is a post-delete operation request.
+	PostDel *RequestPostDel `json:"postDel,omitempty" yaml:"postDel,omitempty"`
 }
 
 // RequestGet defines GET request for target object.
@@ -183,6 +185,12 @@ type RequestGetPodLog struct {
 	// terminating the log output, if set.
 	LimitBytes *int64 `json:"limitBytes" yaml:"limitBytes"`
 }
+type RequestPostDel struct {
+	KubeGroupVersionResource `yaml:",inline"`
+	Namespace string `json:"namespace" yaml:"namespace"`
+	Pattern    string  `json:"pattern" yaml:"pattern"`
+	DeleteRatio float64 `json:"deleteRatio" yaml:"deleteRatio"`
+}
 
 // Validate verifies fields of LoadProfile.
 func (lp LoadProfile) Validate() error {
@@ -246,6 +254,8 @@ func (r WeightedRequest) Validate() error {
 		return r.Patch.Validate()
 	case r.GetPodLog != nil:
 		return r.GetPodLog.Validate()
+	case r.PostDel != nil:
+		return r.PostDel.Validate()
 	default:
 		return fmt.Errorf("empty request value")
 	}
@@ -368,6 +378,18 @@ func (r *RequestPatch) Validate() error {
 	}
 
 	r.Body = trimmed // Store the trimmed body
+
+	return nil
+}
+
+func (r *RequestPostDel) Validate() error {
+	if err := r.KubeGroupVersionResource.Validate(); err != nil {
+		return fmt.Errorf("kube metadata: %v", err)
+	}
+
+	if r.DeleteRatio <= 0 || r.DeleteRatio > 1 {
+		return fmt.Errorf("delete ratio must be greater than 0 and less than or equal to 1")
+	}
 
 	return nil
 }

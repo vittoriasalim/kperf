@@ -1,0 +1,15 @@
+version: 1
+description: "test_mutation"
+spec:
+  rate: 10
+  conns: 10
+  client: 10
+  total: 5
+  contentType: json
+  requests:
+  - postDel:
+      version: v1
+      resource: pod
+      namespace: kperf
+      name: "benchmark-"
+      deleteRatio: 0.3 # 30% chance to delete, 70% chance to create

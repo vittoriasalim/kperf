@@ -4,11 +4,15 @@
 package request
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	mrand "math/rand"
 	"sync"
+	"text/template"
+	"time"
 
 	"github.com/Azure/kperf/api/types"
 
@@ -59,6 +63,8 @@ func NewWeightedRandomRequests(spec *types.LoadProfileSpec) (*WeightedRandomRequ
 			builder = newRequestGetPodLogBuilder(r.GetPodLog, spec.MaxRetries)
 		case r.Patch != nil:
 			builder = newRequestPatchBuilder(r.Patch, "", spec.MaxRetries)
+		case r.PostDel != nil:
+			builder = newRequestPostDelBuilder(r.PostDel, "", spec.Total, spec.MaxRetries) // Pass spec.Total here
 		default:
 			return nil, fmt.Errorf("not implement for PUT yet")
 		}
@@ -408,6 +414,140 @@ func (b *requestPatchBuilder) Build(cli rest.Interface) Requester {
 				MaxRetries(b.maxRetries),
 		},
 	}
+}
+
+type requestPostDelBuilder struct {
+	version         schema.GroupVersion
+	resource        string
+	resourceVersion string
+	namespace       string
+	deleteRatio     float64
+	total           int // Added total field to store the total number of requests
+	maxRetries      int
+}
+
+func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string, total int, maxRetries int) *requestPostDelBuilder {
+	return &requestPostDelBuilder{
+		version:         schema.GroupVersion{Group: src.Group, Version: src.Version},
+		resource:        src.Resource,
+		resourceVersion: resourceVersion,
+		namespace:       src.Namespace,
+		deleteRatio:     src.DeleteRatio,
+		total:           total, // Initialize total field
+		maxRetries:      maxRetries,
+	}
+}
+
+var (
+	postCache = struct {
+		sync.Mutex
+		items []string
+	}{}
+)
+
+func init() {
+	// Replace deprecated mrand.Seed with a new random source
+	mrand.New(mrand.NewSource(time.Now().UnixNano()))
+}
+
+// Allows the POST request body to be dynamically generated
+// based on a template (pod.tpl) and input data (e.g., name and namespace).
+func renderTemplate(resource, name, namespace string) ([]byte, error) {
+	templatePath := ""
+	templateData := map[string]interface{}{
+		"namePattern": name,
+		"namespace":   namespace, // Single resource creation
+	}
+
+	switch resource {
+	case "pod":
+		templatePath = "workload/pods/templates/pod.tpl"
+		// Add more cases for other resources if needed
+	default:
+		return nil, fmt.Errorf("unsupported resource type: %s", resource)
+	}
+
+	var renderedBody bytes.Buffer
+	tmpl, err := template.New(resource).ParseFiles(templatePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse template: %w", err)
+	}
+	if err := tmpl.Execute(&renderedBody, templateData); err != nil {
+		return nil, fmt.Errorf("failed to render template: %w", err)
+	}
+
+	return renderedBody.Bytes(), nil
+}
+
+// Build implements RequestBuilder.Build.
+func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
+	// Calculate POST and DELETE request distribution using b.total
+	postCount, deleteCount := int(float64(b.total)*(1-b.deleteRatio)), int(float64(b.total)*b.deleteRatio)
+
+	// https://kubernetes.io/docs/reference/using-api/#api-groups
+	comps := make([]string, 0, 5)
+	if b.version.Group == "" {
+		comps = append(comps, "api", b.version.Version)
+	} else {
+		comps = append(comps, "apis", b.version.Group, b.version.Version)
+	}
+	comps = append(comps, b.resource)
+
+	postCache.Lock()
+	cacheSize := len(postCache.items)
+	postCache.Unlock()
+
+	if cacheSize > 0 && deleteCount > 0 {
+		// DELETE request
+		postCache.Lock()
+		if len(postCache.items) == 0 {
+			postCache.Unlock()
+			return nil // No items to delete
+		}
+		nameIndex := mrand.Intn(len(postCache.items))
+		name := postCache.items[nameIndex]
+		postCache.items = append(postCache.items[:nameIndex], postCache.items[nameIndex+1:]...)
+		postCache.Unlock()
+
+		if b.namespace != "" {
+			comps = append(comps, "namespaces", b.namespace)
+		}
+		comps = append(comps, name)
+
+		deleteCount-- // Decrement DELETE request count
+		return &DiscardRequester{
+			BaseRequester: BaseRequester{
+				method: "DELETE",
+				req:    cli.Delete().AbsPath(comps...).MaxRetries(b.maxRetries),
+			},
+		}
+	} else if postCount > 0 {
+		// POST request
+		name := b.namespace + "-" + time.Now().Format("20060102150405") // Use timestamp for unique name
+		postCache.Lock()
+		postCache.items = append(postCache.items, name)
+		postCache.Unlock()
+
+		if b.namespace != "" {
+			comps = append(comps, "namespaces", b.namespace)
+		}
+		comps = append(comps, name)
+
+		body, err := renderTemplate("pod", name, b.namespace)
+		if err != nil {
+			panic(err)
+		}
+
+		postCount-- // Decrement POST request count
+		return &DiscardRequester{
+			BaseRequester: BaseRequester{
+				method: "POST",
+				req:    cli.Post().AbsPath(comps...).Body(body).MaxRetries(b.maxRetries),
+			},
+		}
+	}
+
+	return nil // No requests left to process
 }
 
 func toPtr[T any](v T) *T {
