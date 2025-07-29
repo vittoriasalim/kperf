@@ -8,11 +8,9 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
-	mrand "math/rand"
 	"sync"
 
 	"github.com/Azure/kperf/api/types"
-	"github.com/Azure/kperf/contrib/utils"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -62,7 +60,7 @@ func NewWeightedRandomRequests(spec *types.LoadProfileSpec) (*WeightedRandomRequ
 		case r.Patch != nil:
 			builder = newRequestPatchBuilder(r.Patch, "", spec.MaxRetries)
 		case r.PostDel != nil:
-			builder = newRequestPostDelBuilder(r.PostDel, "", spec.Total, spec.MaxRetries) // Pass spec.Total here
+			builder = newRequestPostDelBuilder(r.PostDel, "", 0, spec.MaxRetries) // Pass total as 0 for now
 		default:
 			return nil, fmt.Errorf("not implement for PUT yet")
 		}
@@ -439,13 +437,14 @@ func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string,
 var (
 	postCache = struct {
 		sync.Mutex
-		items []string
+		items          []string
+		totalPostCount int // Track total POST requests made
 	}{}
 )
 
 // Build implements RequestBuilder.Build.
 func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
-	// https://kubernetes.io/docs/reference/using-api/#api-groups
+
 	comps := make([]string, 0, 5)
 	if b.version.Group == "" {
 		comps = append(comps, "api", b.version.Version)
@@ -455,94 +454,80 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 	if b.namespace != "" {
 		comps = append(comps, "namespaces", b.namespace)
 	}
-	comps = append(comps, b.resource)
 
-	// Decide whether to perform POST or DELETE based on deleteRatio, cache capacity, and total requests
-	// Calculate expected number of resources that should exist at steady state
-	// If deleteRatio = 0.3, then 30% delete and 70% create, so steady state should have
-	// approximately (1 - deleteRatio) * total resources in cache
-	expectedCacheSize := int(float64(b.total) * (1.0 - b.deleteRatio))
-	
+	// Calculate expected POST count based on ratio
+	expectedPostCount := int(float64(b.total) * (1.0 - b.deleteRatio))
+
 	postCache.Lock()
+	currentPostCount := postCache.totalPostCount
 	cacheSize := len(postCache.items)
 	postCache.Unlock()
 
-	// Decision logic based on current cache size vs expected capacity
-	var shouldDelete bool
-	if cacheSize == 0 {
-		// No items to delete, must POST
-		shouldDelete = false
-	} else if cacheSize >= expectedCacheSize {
-		// Cache is at or above expected capacity, favor DELETE operations
-		// Generate random number with higher chance of DELETE
-		randomNum, _ := rand.Int(rand.Reader, big.NewInt(100))
-		// Increase DELETE probability when cache is full
-		adjustedDeleteRatio := b.deleteRatio + (float64(cacheSize-expectedCacheSize)/float64(expectedCacheSize))*0.2
-		if adjustedDeleteRatio > 0.8 {
-			adjustedDeleteRatio = 0.8 // Cap at 80% DELETE rate
-		}
-		shouldDelete = float64(randomNum.Int64())/100.0 < adjustedDeleteRatio
-	} else {
-		// Cache is below expected capacity, use normal ratio with slight bias toward POST
-		randomNum, _ := rand.Int(rand.Reader, big.NewInt(100))
-		// Reduce DELETE probability when cache is below capacity
-		adjustedDeleteRatio := b.deleteRatio * (float64(cacheSize) / float64(expectedCacheSize))
-		shouldDelete = float64(randomNum.Int64())/100.0 < adjustedDeleteRatio
-	}
-
-	// If we should delete and there are items in cache, perform DELETE
-	if shouldDelete && cacheSize > 0 {
+	// If total POST count has reached expected count, perform DELETE only
+	if currentPostCount >= expectedPostCount && cacheSize > 0 {
+		// Pop first item (FIFO) with proper mutex locking
 		postCache.Lock()
-		if len(postCache.items) == 0 {
+		if len(postCache.items) > 0 {
+			name := postCache.items[0]
+			postCache.items = postCache.items[1:]
 			postCache.Unlock()
-			// If cache is empty, fall back to POST
-			return b.buildPostRequest(cli, comps)
-		}
-		// Pick a random item from cache
-		nameIndex := mrand.Intn(len(postCache.items))
-		name := postCache.items[nameIndex]
-		// Remove item from cache
-		postCache.items = append(postCache.items[:nameIndex], postCache.items[nameIndex+1:]...)
-		postCache.Unlock()
+			
+			comps = append(comps, b.resource, name)
 
-		// Build DELETE request
-		deleteComps := make([]string, 0, len(comps)+1)
-		deleteComps = append(deleteComps, comps...)
-		deleteComps = append(deleteComps, name)
-
-		return &DiscardRequester{
-			BaseRequester: BaseRequester{
-				method: "DELETE",
-				req:    cli.Delete().AbsPath(deleteComps...).MaxRetries(b.maxRetries),
-			},
+			return &DiscardRequester{
+				BaseRequester: BaseRequester{
+					method: "DELETE",
+					req: cli.Delete().AbsPath(comps...).
+						MaxRetries(b.maxRetries),
+				},
+			}
+		} else {
+			postCache.Unlock()
+			// Fall through to POST if cache is empty
 		}
 	}
-
-	// Otherwise, perform POST
-	return b.buildPostRequest(cli, comps)
-}
-
-func (b *requestPostDelBuilder) buildPostRequest(cli rest.Interface, comps []string) Requester {
-	// Generate random name for POST request
+	
+	// POST logic - create new pod and use PostRequester
+	comps = append(comps, b.resource)
 	randomNum, _ := rand.Int(rand.Reader, big.NewInt(1000000))
 	name := fmt.Sprintf("%s-%d", b.namespace, randomNum.Int64())
-	
-	// Add to cache for future DELETE operations
+
+	// Increment POST count immediately when POST is called
 	postCache.Lock()
-	postCache.items = append(postCache.items, name)
+	postCache.totalPostCount++
 	postCache.Unlock()
 
-	body, err := utils.RenderTemplate(b.resource, name, b.namespace)
-	if err != nil {
-		panic(err)
-	}
+	// body, err := utils.RenderTemplate(b.resource, name, b.namespace)
+	body := []byte(`{"apiVersion":"v1","kind":"Pod","metadata":{"name":"` + name + `","namespace":"` + b.namespace + `"},"spec":{"containers":[{"name":"test","image":"nginx"}]}}`)
 
-	return &DiscardRequester{
+	return &PostRequester{
 		BaseRequester: BaseRequester{
 			method: "POST",
 			req:    cli.Post().AbsPath(comps...).Body(body).MaxRetries(b.maxRetries),
 		},
+		podName: name,
 	}
+
+}
+
+// PostRequester handles POST requests and only adds to cache when POST succeeds
+type PostRequester struct {
+	BaseRequester
+	podName string
+}
+
+func (reqr *PostRequester) Do(ctx context.Context) (bytes int64, err error) {
+	result := reqr.req.Do(ctx)
+	body, _ := result.Raw()
+	
+	// Only add to cache if POST request was successful
+	if result.Error() == nil {
+		postCache.Lock()
+		postCache.items = append(postCache.items, reqr.podName)
+		postCache.Unlock()
+	}
+	
+	return int64(len(body)), result.Error()
 }
 
 func toPtr[T any](v T) *T {

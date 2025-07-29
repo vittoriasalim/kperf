@@ -4,7 +4,7 @@ spec:
   rate: 10
   conns: 10
   client: 10
-  total: 3
+  total: 10  # Increase to see DELETE operations
   contentType: json
   requests:
   - postDel:
