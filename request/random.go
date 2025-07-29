@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"math/big"
+	mrand "math/rand"
 	"sync"
 
 	"github.com/Azure/kperf/api/types"
@@ -435,18 +436,15 @@ func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string,
 	}
 }
 
-// var (
-// 	postCache = struct {
-// 		sync.Mutex
-// 		items []string
-// 	}{}
-// )
+var (
+	postCache = struct {
+		sync.Mutex
+		items []string
+	}{}
+)
 
 // Build implements RequestBuilder.Build.
 func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
-	// Calculate POST and DELETE request distribution using b.total
-	// postCount, deleteCount := int(float64(b.total)*(1-b.deleteRatio)), int(float64(b.total)*b.deleteRatio)
-
 	// https://kubernetes.io/docs/reference/using-api/#api-groups
 	comps := make([]string, 0, 5)
 	if b.version.Group == "" {
@@ -459,12 +457,80 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 	}
 	comps = append(comps, b.resource)
 
-	// POST request - generate random name
+	// Decide whether to perform POST or DELETE based on deleteRatio, cache capacity, and total requests
+	// Calculate expected number of resources that should exist at steady state
+	// If deleteRatio = 0.3, then 30% delete and 70% create, so steady state should have
+	// approximately (1 - deleteRatio) * total resources in cache
+	expectedCacheSize := int(float64(b.total) * (1.0 - b.deleteRatio))
+	
+	postCache.Lock()
+	cacheSize := len(postCache.items)
+	postCache.Unlock()
+
+	// Decision logic based on current cache size vs expected capacity
+	var shouldDelete bool
+	if cacheSize == 0 {
+		// No items to delete, must POST
+		shouldDelete = false
+	} else if cacheSize >= expectedCacheSize {
+		// Cache is at or above expected capacity, favor DELETE operations
+		// Generate random number with higher chance of DELETE
+		randomNum, _ := rand.Int(rand.Reader, big.NewInt(100))
+		// Increase DELETE probability when cache is full
+		adjustedDeleteRatio := b.deleteRatio + (float64(cacheSize-expectedCacheSize)/float64(expectedCacheSize))*0.2
+		if adjustedDeleteRatio > 0.8 {
+			adjustedDeleteRatio = 0.8 // Cap at 80% DELETE rate
+		}
+		shouldDelete = float64(randomNum.Int64())/100.0 < adjustedDeleteRatio
+	} else {
+		// Cache is below expected capacity, use normal ratio with slight bias toward POST
+		randomNum, _ := rand.Int(rand.Reader, big.NewInt(100))
+		// Reduce DELETE probability when cache is below capacity
+		adjustedDeleteRatio := b.deleteRatio * (float64(cacheSize) / float64(expectedCacheSize))
+		shouldDelete = float64(randomNum.Int64())/100.0 < adjustedDeleteRatio
+	}
+
+	// If we should delete and there are items in cache, perform DELETE
+	if shouldDelete && cacheSize > 0 {
+		postCache.Lock()
+		if len(postCache.items) == 0 {
+			postCache.Unlock()
+			// If cache is empty, fall back to POST
+			return b.buildPostRequest(cli, comps)
+		}
+		// Pick a random item from cache
+		nameIndex := mrand.Intn(len(postCache.items))
+		name := postCache.items[nameIndex]
+		// Remove item from cache
+		postCache.items = append(postCache.items[:nameIndex], postCache.items[nameIndex+1:]...)
+		postCache.Unlock()
+
+		// Build DELETE request
+		deleteComps := make([]string, 0, len(comps)+1)
+		deleteComps = append(deleteComps, comps...)
+		deleteComps = append(deleteComps, name)
+
+		return &DiscardRequester{
+			BaseRequester: BaseRequester{
+				method: "DELETE",
+				req:    cli.Delete().AbsPath(deleteComps...).MaxRetries(b.maxRetries),
+			},
+		}
+	}
+
+	// Otherwise, perform POST
+	return b.buildPostRequest(cli, comps)
+}
+
+func (b *requestPostDelBuilder) buildPostRequest(cli rest.Interface, comps []string) Requester {
+	// Generate random name for POST request
 	randomNum, _ := rand.Int(rand.Reader, big.NewInt(1000000))
 	name := fmt.Sprintf("%s-%d", b.namespace, randomNum.Int64())
-	// postCache.Lock()
-	// postCache.items = append(postCache.items, name)
-	// postCache.Unlock()
+	
+	// Add to cache for future DELETE operations
+	postCache.Lock()
+	postCache.items = append(postCache.items, name)
+	postCache.Unlock()
 
 	body, err := utils.RenderTemplate(b.resource, name, b.namespace)
 	if err != nil {
@@ -477,61 +543,6 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 			req:    cli.Post().AbsPath(comps...).Body(body).MaxRetries(b.maxRetries),
 		},
 	}
-
-	// postCache.Lock()
-	// cacheSize := len(postCache.items)
-	// postCache.Unlock()
-
-	// if cacheSize > 0 && deleteCount > 0 {
-	// 	// DELETE request
-	// 	postCache.Lock()
-	// 	if len(postCache.items) == 0 {
-	// 		postCache.Unlock()
-	// 		return nil // No items to delete
-	// 	}
-	// 	nameIndex := mrand.Intn(len(postCache.items))
-	// 	name := postCache.items[nameIndex]
-	// 	postCache.items = append(postCache.items[:nameIndex], postCache.items[nameIndex+1:]...)
-	// 	postCache.Unlock()
-
-	// 	if b.namespace != "" {
-	// 		comps = append(comps, "namespaces", b.namespace)
-	// 	}
-	// 	comps = append(comps, name)
-
-	// 	deleteCount-- // Decrement DELETE request count
-	// 	return &DiscardRequester{
-	// 		BaseRequester: BaseRequester{
-	// 			method: "DELETE",
-	// 			req:    cli.Delete().AbsPath(comps...).MaxRetries(b.maxRetries),
-	// 		},
-	// 	}
-	// } else if postCount > 0 {
-	// 	// POST request
-	// 	name := b.namespace + "-" + time.Now().Format("20060102150405") // Use timestamp for unique name
-	// 	postCache.Lock()
-	// 	postCache.items = append(postCache.items, name)
-	// 	postCache.Unlock()
-
-	// 	if b.namespace != "" {
-	// 		comps = append(comps, "namespaces", b.namespace)
-	// 	}
-	// 	comps = append(comps, b.resource)
-
-	// 	body, err := utils.RenderTemplate(b.resource, name, b.namespace)
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
-
-	// 	postCount-- // Decrement POST request count
-	// 	return &DiscardRequester{
-	// 		BaseRequester: BaseRequester{
-	// 			method: "POST",
-	// 			req:    cli.Post().AbsPath(comps...).Body(body).MaxRetries(b.maxRetries),
-	// 		},
-	// 	}
-	// }
-
 }
 
 func toPtr[T any](v T) *T {
