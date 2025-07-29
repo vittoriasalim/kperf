@@ -4,17 +4,14 @@
 package request
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"fmt"
 	"math/big"
-	mrand "math/rand"
 	"sync"
-	"text/template"
-	"time"
 
 	"github.com/Azure/kperf/api/types"
+	"github.com/Azure/kperf/contrib/utils"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -438,51 +435,17 @@ func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string,
 	}
 }
 
-var (
-	postCache = struct {
-		sync.Mutex
-		items []string
-	}{}
-)
-
-func init() {
-	// Replace deprecated mrand.Seed with a new random source
-	mrand.New(mrand.NewSource(time.Now().UnixNano()))
-}
-
-// Allows the POST request body to be dynamically generated
-// based on a template (pod.tpl) and input data (e.g., name and namespace).
-func renderTemplate(resource, name, namespace string) ([]byte, error) {
-	templatePath := ""
-	templateData := map[string]interface{}{
-		"namePattern": name,
-		"namespace":   namespace, // Single resource creation
-	}
-
-	switch resource {
-	case "pod":
-		templatePath = "workload/pods/templates/pod.tpl"
-		// Add more cases for other resources if needed
-	default:
-		return nil, fmt.Errorf("unsupported resource type: %s", resource)
-	}
-
-	var renderedBody bytes.Buffer
-	tmpl, err := template.New(resource).ParseFiles(templatePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse template: %w", err)
-	}
-	if err := tmpl.Execute(&renderedBody, templateData); err != nil {
-		return nil, fmt.Errorf("failed to render template: %w", err)
-	}
-
-	return renderedBody.Bytes(), nil
-}
+// var (
+// 	postCache = struct {
+// 		sync.Mutex
+// 		items []string
+// 	}{}
+// )
 
 // Build implements RequestBuilder.Build.
 func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 	// Calculate POST and DELETE request distribution using b.total
-	postCount, deleteCount := int(float64(b.total)*(1-b.deleteRatio)), int(float64(b.total)*b.deleteRatio)
+	// postCount, deleteCount := int(float64(b.total)*(1-b.deleteRatio)), int(float64(b.total)*b.deleteRatio)
 
 	// https://kubernetes.io/docs/reference/using-api/#api-groups
 	comps := make([]string, 0, 5)
@@ -491,63 +454,84 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 	} else {
 		comps = append(comps, "apis", b.version.Group, b.version.Version)
 	}
+	if b.namespace != "" {
+		comps = append(comps, "namespaces", b.namespace)
+	}
 	comps = append(comps, b.resource)
 
-	postCache.Lock()
-	cacheSize := len(postCache.items)
-	postCache.Unlock()
+	// POST request - generate random name
+	randomNum, _ := rand.Int(rand.Reader, big.NewInt(1000000))
+	name := fmt.Sprintf("%s-%d", b.namespace, randomNum.Int64())
+	// postCache.Lock()
+	// postCache.items = append(postCache.items, name)
+	// postCache.Unlock()
 
-	if cacheSize > 0 && deleteCount > 0 {
-		// DELETE request
-		postCache.Lock()
-		if len(postCache.items) == 0 {
-			postCache.Unlock()
-			return nil // No items to delete
-		}
-		nameIndex := mrand.Intn(len(postCache.items))
-		name := postCache.items[nameIndex]
-		postCache.items = append(postCache.items[:nameIndex], postCache.items[nameIndex+1:]...)
-		postCache.Unlock()
-
-		if b.namespace != "" {
-			comps = append(comps, "namespaces", b.namespace)
-		}
-		comps = append(comps, name)
-
-		deleteCount-- // Decrement DELETE request count
-		return &DiscardRequester{
-			BaseRequester: BaseRequester{
-				method: "DELETE",
-				req:    cli.Delete().AbsPath(comps...).MaxRetries(b.maxRetries),
-			},
-		}
-	} else if postCount > 0 {
-		// POST request
-		name := b.namespace + "-" + time.Now().Format("20060102150405") // Use timestamp for unique name
-		postCache.Lock()
-		postCache.items = append(postCache.items, name)
-		postCache.Unlock()
-
-		if b.namespace != "" {
-			comps = append(comps, "namespaces", b.namespace)
-		}
-		comps = append(comps, name)
-
-		body, err := renderTemplate("pod", name, b.namespace)
-		if err != nil {
-			panic(err)
-		}
-
-		postCount-- // Decrement POST request count
-		return &DiscardRequester{
-			BaseRequester: BaseRequester{
-				method: "POST",
-				req:    cli.Post().AbsPath(comps...).Body(body).MaxRetries(b.maxRetries),
-			},
-		}
+	body, err := utils.RenderTemplate(b.resource, name, b.namespace)
+	if err != nil {
+		panic(err)
 	}
 
-	return nil // No requests left to process
+	return &DiscardRequester{
+		BaseRequester: BaseRequester{
+			method: "POST",
+			req:    cli.Post().AbsPath(comps...).Body(body).MaxRetries(b.maxRetries),
+		},
+	}
+
+	// postCache.Lock()
+	// cacheSize := len(postCache.items)
+	// postCache.Unlock()
+
+	// if cacheSize > 0 && deleteCount > 0 {
+	// 	// DELETE request
+	// 	postCache.Lock()
+	// 	if len(postCache.items) == 0 {
+	// 		postCache.Unlock()
+	// 		return nil // No items to delete
+	// 	}
+	// 	nameIndex := mrand.Intn(len(postCache.items))
+	// 	name := postCache.items[nameIndex]
+	// 	postCache.items = append(postCache.items[:nameIndex], postCache.items[nameIndex+1:]...)
+	// 	postCache.Unlock()
+
+	// 	if b.namespace != "" {
+	// 		comps = append(comps, "namespaces", b.namespace)
+	// 	}
+	// 	comps = append(comps, name)
+
+	// 	deleteCount-- // Decrement DELETE request count
+	// 	return &DiscardRequester{
+	// 		BaseRequester: BaseRequester{
+	// 			method: "DELETE",
+	// 			req:    cli.Delete().AbsPath(comps...).MaxRetries(b.maxRetries),
+	// 		},
+	// 	}
+	// } else if postCount > 0 {
+	// 	// POST request
+	// 	name := b.namespace + "-" + time.Now().Format("20060102150405") // Use timestamp for unique name
+	// 	postCache.Lock()
+	// 	postCache.items = append(postCache.items, name)
+	// 	postCache.Unlock()
+
+	// 	if b.namespace != "" {
+	// 		comps = append(comps, "namespaces", b.namespace)
+	// 	}
+	// 	comps = append(comps, b.resource)
+
+	// 	body, err := utils.RenderTemplate(b.resource, name, b.namespace)
+	// 	if err != nil {
+	// 		panic(err)
+	// 	}
+
+	// 	postCount-- // Decrement POST request count
+	// 	return &DiscardRequester{
+	// 		BaseRequester: BaseRequester{
+	// 			method: "POST",
+	// 			req:    cli.Post().AbsPath(comps...).Body(body).MaxRetries(b.maxRetries),
+	// 		},
+	// 	}
+	// }
+
 }
 
 func toPtr[T any](v T) *T {

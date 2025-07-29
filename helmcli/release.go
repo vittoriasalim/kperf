@@ -227,3 +227,24 @@ func copyValues(src map[string]interface{}) (map[string]interface{}, error) {
 	}
 	return newValues, nil
 }
+
+// Render renders the Helm chart templates with the provided values and returns the rendered YAML.
+func (cli *ReleaseCli) Render(ctx context.Context) (string, error) {
+	values, err := cli.initValues()
+	if err != nil {
+		return "", err
+	}
+
+	// Use Helm's template rendering capabilities
+	templater := action.NewInstall(cli.cfg)
+	templater.DryRun = true
+	templater.ReleaseName = cli.name
+	templater.Namespace = cli.namespace
+
+	release, err := templater.RunWithContext(ctx, cli.ch, values)
+	if err != nil {
+		return "", fmt.Errorf("failed to render templates: %w", err)
+	}
+
+	return release.Manifest, nil
+}

@@ -20,10 +20,10 @@ import (
 	"github.com/Azure/kperf/contrib/log"
 	"github.com/Azure/kperf/helmcli"
 
-	"gopkg.in/yaml.v2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/yaml"
 )
 
 var (
@@ -114,6 +114,54 @@ func RepeatJobWithPod(ctx context.Context, kubeCfgPath string, namespace string,
 		}
 		time.Sleep(jobsTimeout.jobInterval)
 	}
+}
+
+// Allows the POST request body to be dynamically generated
+// based on a template (pod.tpl) and input data (e.g., name and namespace).
+func RenderTemplate(resource string, name string, namespace string) ([]byte, error) {
+	target := ""
+
+	switch resource {
+	case "pods":
+		target = "workload/pods"
+	default:
+		return nil, fmt.Errorf("unsupported resource type: %s", resource)
+	}
+
+	// Load the Helm chart
+	ch, err := manifests.LoadChart(target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load %s chart: %w", target, err)
+	}
+
+	// Create a new Helm release client for rendering
+	releaseCli, err := helmcli.NewReleaseCli(
+		"", // kubeconfigPath not needed for rendering
+		namespace,
+		name,
+		ch,
+		nil,
+		helmcli.StringPathValuesApplier(
+			fmt.Sprintf("namePattern=%s", name),
+			fmt.Sprintf("namespace=%s", namespace),
+		),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create helm release cli: %w", err)
+	}
+
+	rendered, err := releaseCli.Render(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to render helm chart %s: %w", target, err)
+	}
+
+	// Convert YAML to JSON, Kubernetes API expects JSON
+	jsonData, err := yaml.YAMLToJSON([]byte(rendered))
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert YAML to JSON: %w", err)
+	}
+
+	return jsonData, nil
 }
 
 // DeployDeployments deploys deployments.
