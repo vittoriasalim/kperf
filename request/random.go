@@ -484,11 +484,11 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 							MaxRetries(b.maxRetries),
 					},
 				}
-			} else {
-				postCache.Unlock()
-				// Brief wait for cache to populate
-				time.Sleep(150 * time.Millisecond)
 			}
+			postCache.Unlock()
+			// Brief wait for cache to populate before retry
+			time.Sleep(150 * time.Millisecond)
+			
 		}
 
 		// Fallback to POST if no items available after retries
