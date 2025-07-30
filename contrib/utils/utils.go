@@ -4,6 +4,7 @@
 package utils
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/Azure/kperf/api/types"
@@ -20,12 +22,10 @@ import (
 	"github.com/Azure/kperf/contrib/log"
 	"github.com/Azure/kperf/helmcli"
 
-	"bytes"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/yaml"
-	"text/template"
 )
 
 var (
@@ -120,8 +120,8 @@ func RepeatJobWithPod(ctx context.Context, kubeCfgPath string, namespace string,
 
 // RenderTemplate renders a resource template to JSON for K8s API requests
 func RenderTemplate(resource string, name string, namespace string) ([]byte, error) {
-	// Resource template 
-	// TODO: add more template for resource 
+	// Resource template
+	// TODO: add more template for resource
 	templatePaths := map[string]string{
 		"pods": "workload/pods/templates/pod.tpl",
 	}
