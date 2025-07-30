@@ -20,10 +20,12 @@ import (
 	"github.com/Azure/kperf/contrib/log"
 	"github.com/Azure/kperf/helmcli"
 
+	"bytes"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/yaml"
+	"text/template"
 )
 
 var (
@@ -116,52 +118,37 @@ func RepeatJobWithPod(ctx context.Context, kubeCfgPath string, namespace string,
 	}
 }
 
-// Allows the POST request body to be dynamically generated
-// based on a template (pod.tpl) and input data (e.g., name and namespace).
+// RenderTemplate renders a resource template to JSON for K8s API requests
 func RenderTemplate(resource string, name string, namespace string) ([]byte, error) {
-	target := ""
-
-	switch resource {
-	case "pods":
-		target = "workload/pods"
-	default:
+	// Resource template 
+	// TODO: add more template for resource 
+	templatePaths := map[string]string{
+		"pods": "workload/pods/templates/pod.tpl",
+	}
+	templatePath, ok := templatePaths[resource]
+	if !ok {
 		return nil, fmt.Errorf("unsupported resource type: %s", resource)
 	}
 
-	// Load the Helm chart
-	ch, err := manifests.LoadChart(target)
+	templateContent, err := manifests.FS.ReadFile(templatePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load %s chart: %w", target, err)
+		return nil, fmt.Errorf("failed to read template: %w", err)
 	}
 
-	// Create a new Helm release client for rendering
-	releaseCli, err := helmcli.NewReleaseCli(
-		"", // kubeconfigPath not needed for rendering
-		namespace,
-		name,
-		ch,
-		nil,
-		helmcli.StringPathValuesApplier(
-			fmt.Sprintf("namePattern=%s", name),
-			fmt.Sprintf("namespace=%s", namespace),
-		),
-	)
+	tmpl, err := template.New(resource).Parse(string(templateContent))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create helm release cli: %w", err)
+		return nil, fmt.Errorf("failed to parse template: %w", err)
 	}
 
-	rendered, err := releaseCli.Render(context.Background())
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, map[string]interface{}{
+		"Values": map[string]interface{}{"namePattern": name, "namespace": namespace},
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to render helm chart %s: %w", target, err)
+		return nil, fmt.Errorf("failed to execute template: %w", err)
 	}
 
-	// Convert YAML to JSON, Kubernetes API expects JSON
-	jsonData, err := yaml.YAMLToJSON([]byte(rendered))
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert YAML to JSON: %w", err)
-	}
-
-	return jsonData, nil
+	return yaml.YAMLToJSON(buf.Bytes())
 }
 
 // DeployDeployments deploys deployments.

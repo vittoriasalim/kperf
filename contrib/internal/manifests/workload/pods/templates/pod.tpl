@@ -1,8 +1,10 @@
+{{- $name:= .Values.namePattern }}
+{{- $namespace:= .Values.namespace }}
 apiVersion: v1
 kind: Pod
 metadata:
-  name: {{ .Values.namePattern }}
-  namespace: {{ .Values.namespace }}
+  name: {{ $name }}
+  namespace: {{ $namespace }}
   labels:
     app: fake-pod
 spec:

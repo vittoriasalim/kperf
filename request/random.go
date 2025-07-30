@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Azure/kperf/api/types"
+	"github.com/Azure/kperf/contrib/utils"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -419,7 +420,7 @@ type requestPostDelBuilder struct {
 	resourceVersion string
 	namespace       string
 	deleteRatio     float64
-	total           int // Added total field to store the total number of requests
+	total           int // Total number of requests
 	maxRetries      int
 }
 
@@ -430,7 +431,7 @@ func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string,
 		resourceVersion: resourceVersion,
 		namespace:       src.Namespace,
 		deleteRatio:     src.DeleteRatio,
-		total:           total, // Initialize total field
+		total:           total,
 		maxRetries:      maxRetries,
 	}
 }
@@ -465,8 +466,9 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 
 	// If total POST count has reached expected count, perform DELETE only
 	if currentPostCount >= expectedPostCount {
-		// Wait for cache to have items before deleting
-		for {
+		// Retry logic to wait for cache items to become available for DELETE
+		cacheRetries := 100
+		for i := 0; i < cacheRetries; i++ {
 			postCache.Lock()
 			if len(postCache.items) > 0 {
 				name := postCache.items[0]
@@ -484,10 +486,12 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 				}
 			} else {
 				postCache.Unlock()
-				// Wait until cache is not empty
-				time.Sleep(10 * time.Millisecond)
+				// Brief wait for cache to populate
+				time.Sleep(150 * time.Millisecond)
 			}
 		}
+	
+		// Fallback to POST if no items available after retries
 	}
 	
 	// POST logic - create new pod and use PostRequester
@@ -500,9 +504,7 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 	postCache.totalPostCount++
 	postCache.Unlock()
 
-	// body, err := utils.RenderTemplate(b.resource, name, b.namespace)
-	body := []byte(`{"apiVersion":"v1","kind":"Pod","metadata":{"name":"` + name + `","namespace":"` + b.namespace + `"},"spec":{"containers":[{"name":"test","image":"nginx"}]}}`)
-
+	body, _ := utils.RenderTemplate(b.resource, name, b.namespace)
 	return &PostRequester{
 		BaseRequester: BaseRequester{
 			method: "POST",
