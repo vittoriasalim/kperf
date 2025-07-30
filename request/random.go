@@ -474,7 +474,7 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 				name := postCache.items[0]
 				postCache.items = postCache.items[1:]
 				postCache.Unlock()
-				
+
 				comps = append(comps, b.resource, name)
 
 				return &DiscardRequester{
@@ -490,10 +490,10 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 				time.Sleep(150 * time.Millisecond)
 			}
 		}
-	
+
 		// Fallback to POST if no items available after retries
 	}
-	
+
 	// POST logic - create new pod and use PostRequester
 	comps = append(comps, b.resource)
 	randomNum, _ := rand.Int(rand.Reader, big.NewInt(1000000))
@@ -524,14 +524,14 @@ type PostRequester struct {
 func (reqr *PostRequester) Do(ctx context.Context) (bytes int64, err error) {
 	result := reqr.req.Do(ctx)
 	body, _ := result.Raw()
-	
+
 	// Only add to cache if POST request was successful
 	if result.Error() == nil {
 		postCache.Lock()
 		postCache.items = append(postCache.items, reqr.podName)
 		postCache.Unlock()
 	}
-	
+
 	return int64(len(body)), result.Error()
 }
 

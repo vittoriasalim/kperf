@@ -187,8 +187,8 @@ type RequestGetPodLog struct {
 }
 type RequestPostDel struct {
 	KubeGroupVersionResource `yaml:",inline"`
-	Namespace string `json:"namespace" yaml:"namespace"`
-	DeleteRatio float64 `json:"deleteRatio" yaml:"deleteRatio"`
+	Namespace                string  `json:"namespace" yaml:"namespace"`
+	DeleteRatio              float64 `json:"deleteRatio" yaml:"deleteRatio"`
 }
 
 // Validate verifies fields of LoadProfile.
