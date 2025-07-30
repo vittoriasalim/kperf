@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
+	"time"
 
 	"github.com/Azure/kperf/api/types"
 
@@ -60,7 +61,7 @@ func NewWeightedRandomRequests(spec *types.LoadProfileSpec) (*WeightedRandomRequ
 		case r.Patch != nil:
 			builder = newRequestPatchBuilder(r.Patch, "", spec.MaxRetries)
 		case r.PostDel != nil:
-			builder = newRequestPostDelBuilder(r.PostDel, "", 0, spec.MaxRetries) // Pass total as 0 for now
+			builder = newRequestPostDelBuilder(r.PostDel, "", spec.Total, spec.MaxRetries) // Pass total as 0 for now
 		default:
 			return nil, fmt.Errorf("not implement for PUT yet")
 		}
@@ -460,30 +461,32 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 
 	postCache.Lock()
 	currentPostCount := postCache.totalPostCount
-	cacheSize := len(postCache.items)
 	postCache.Unlock()
 
 	// If total POST count has reached expected count, perform DELETE only
-	if currentPostCount >= expectedPostCount && cacheSize > 0 {
-		// Pop first item (FIFO) with proper mutex locking
-		postCache.Lock()
-		if len(postCache.items) > 0 {
-			name := postCache.items[0]
-			postCache.items = postCache.items[1:]
-			postCache.Unlock()
-			
-			comps = append(comps, b.resource, name)
+	if currentPostCount >= expectedPostCount {
+		// Wait for cache to have items before deleting
+		for {
+			postCache.Lock()
+			if len(postCache.items) > 0 {
+				name := postCache.items[0]
+				postCache.items = postCache.items[1:]
+				postCache.Unlock()
+				
+				comps = append(comps, b.resource, name)
 
-			return &DiscardRequester{
-				BaseRequester: BaseRequester{
-					method: "DELETE",
-					req: cli.Delete().AbsPath(comps...).
-						MaxRetries(b.maxRetries),
-				},
+				return &DiscardRequester{
+					BaseRequester: BaseRequester{
+						method: "DELETE",
+						req: cli.Delete().AbsPath(comps...).
+							MaxRetries(b.maxRetries),
+					},
+				}
+			} else {
+				postCache.Unlock()
+				// Wait until cache is not empty
+				time.Sleep(10 * time.Millisecond)
 			}
-		} else {
-			postCache.Unlock()
-			// Fall through to POST if cache is empty
 		}
 	}
 	
