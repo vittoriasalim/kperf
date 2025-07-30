@@ -486,7 +486,7 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 		// If we reach here, fall back to POST after timeout
 	}
 
-	// POST logic - create new pod and use PostRequester
+	// POST logic - create resource and add to cache if successful
 	comps = append(comps, b.resource)
 	randomNum, _ := rand.Int(rand.Reader, big.NewInt(1000000))
 	name := fmt.Sprintf("%s-%d", b.namespace, randomNum.Int64())
