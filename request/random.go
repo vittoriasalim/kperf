@@ -454,7 +454,7 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 		comps = append(comps, "namespaces", b.namespace)
 	}
 
-	// Pick operation DELETE or CREATE based on deleteRatio probability
+	// Random pick operation DELETE or CREATE based on deleteRatio probability
 	randomFloat, _ := rand.Int(rand.Reader, big.NewInt(1000))
 	shouldDelete := float64(randomFloat.Int64())/1000.0 < b.deleteRatio
 
