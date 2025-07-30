@@ -465,7 +465,8 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 			postCache.Lock()
 			if len(postCache.items) > 0 {
 				name := postCache.items[0]
-				// Don't remove from cache yet - only remove if DELETE succeeds
+				// Remove from cache immediately to prevent race conditions
+				postCache.items = postCache.items[1:]
 				postCache.Unlock()
 
 				comps = append(comps, b.resource, name)
@@ -522,7 +523,7 @@ func (reqr *PostRequester) Do(ctx context.Context) (bytes int64, err error) {
 	return int64(len(body)), result.Error()
 }
 
-// DeleteRequester handles DELETE requests and only removes from cache when DELETE succeeds
+// DeleteRequester handles DELETE requests - item already removed from cache during selection
 type DeleteRequester struct {
 	BaseRequester
 	podName string
@@ -532,16 +533,11 @@ func (reqr *DeleteRequester) Do(ctx context.Context) (bytes int64, err error) {
 	result := reqr.req.Do(ctx)
 	body, _ := result.Raw()
 
-	// Only remove from cache if DELETE request was successful
-	if result.Error() == nil {
+	// If DELETE request failed, restore the item back to cache
+	// since the pod still exists in Kubernetes
+	if result.Error() != nil {
 		postCache.Lock()
-		// Find and remove the item from cache
-		for i, item := range postCache.items {
-			if item == reqr.podName {
-				postCache.items = append(postCache.items[:i], postCache.items[i+1:]...)
-				break
-			}
-		}
+		postCache.items = append(postCache.items, reqr.podName)
 		postCache.Unlock()
 	}
 
