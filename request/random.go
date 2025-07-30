@@ -62,7 +62,7 @@ func NewWeightedRandomRequests(spec *types.LoadProfileSpec) (*WeightedRandomRequ
 		case r.Patch != nil:
 			builder = newRequestPatchBuilder(r.Patch, "", spec.MaxRetries)
 		case r.PostDel != nil:
-			builder = newRequestPostDelBuilder(r.PostDel, "", spec.Total, spec.MaxRetries) // Pass total as 0 for now
+			builder = newRequestPostDelBuilder(r.PostDel, "", spec.MaxRetries)
 		default:
 			return nil, fmt.Errorf("not implement for PUT yet")
 		}
@@ -420,18 +420,16 @@ type requestPostDelBuilder struct {
 	resourceVersion string
 	namespace       string
 	deleteRatio     float64
-	total           int // Total number of requests
 	maxRetries      int
 }
 
-func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string, total int, maxRetries int) *requestPostDelBuilder {
+func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string, maxRetries int) *requestPostDelBuilder {
 	return &requestPostDelBuilder{
 		version:         schema.GroupVersion{Group: src.Group, Version: src.Version},
 		resource:        src.Resource,
 		resourceVersion: resourceVersion,
 		namespace:       src.Namespace,
 		deleteRatio:     src.DeleteRatio,
-		total:           total,
 		maxRetries:      maxRetries,
 	}
 }
@@ -439,8 +437,7 @@ func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string,
 var (
 	postCache = struct {
 		sync.Mutex
-		items          []string
-		totalPostCount int // Track total POST requests made
+		items []string
 	}{}
 )
 
@@ -457,16 +454,12 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 		comps = append(comps, "namespaces", b.namespace)
 	}
 
-	// Calculate expected POST count based on ratio
-	expectedPostCount := int(float64(b.total) * (1.0 - b.deleteRatio))
+	// Randomly pick between DELETE and CREATE based on deleteRatio probability
+	randomFloat, _ := rand.Int(rand.Reader, big.NewInt(1000))
+	shouldDelete := float64(randomFloat.Int64())/1000.0 < b.deleteRatio
 
-	postCache.Lock()
-	currentPostCount := postCache.totalPostCount
-	postCache.Unlock()
-
-	// If total POST count has reached expected count, perform DELETE only
-	if currentPostCount >= expectedPostCount {
-		// Retry logic to wait for cache items to become available for DELETE
+	if shouldDelete {
+		// DELETE operation - timeout if no item available
 		cacheRetries := 100
 		for i := 0; i < cacheRetries; i++ {
 			postCache.Lock()
@@ -486,23 +479,16 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 				}
 			}
 			postCache.Unlock()
-			// Brief wait for cache to populate before retry
-			time.Sleep(150 * time.Millisecond)
-
+			// Brief wait before checking again
+			time.Sleep(10 * time.Millisecond)
 		}
-
-		// Fallback to POST if no items available after retries
+		// If we reach here, fall back to POST after timeout
 	}
 
 	// POST logic - create new pod and use PostRequester
 	comps = append(comps, b.resource)
 	randomNum, _ := rand.Int(rand.Reader, big.NewInt(1000000))
 	name := fmt.Sprintf("%s-%d", b.namespace, randomNum.Int64())
-
-	// Increment POST count immediately when POST is called
-	postCache.Lock()
-	postCache.totalPostCount++
-	postCache.Unlock()
 
 	body, _ := utils.RenderTemplate(b.resource, name, b.namespace)
 	return &PostRequester{
