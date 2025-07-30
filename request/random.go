@@ -488,7 +488,7 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 			postCache.Unlock()
 			// Brief wait for cache to populate before retry
 			time.Sleep(150 * time.Millisecond)
-			
+
 		}
 
 		// Fallback to POST if no items available after retries
