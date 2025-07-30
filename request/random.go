@@ -454,18 +454,17 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 		comps = append(comps, "namespaces", b.namespace)
 	}
 
-	// Randomly pick between DELETE and CREATE based on deleteRatio probability
+	// Pick operation DELETE or CREATE based on deleteRatio probability
 	randomFloat, _ := rand.Int(rand.Reader, big.NewInt(1000))
 	shouldDelete := float64(randomFloat.Int64())/1000.0 < b.deleteRatio
 
 	if shouldDelete {
-		// DELETE operation - if timeout fall back to create
+		// DELETE operation - retrieve from cache
 		cacheRetries := 100
 		for i := 0; i < cacheRetries; i++ {
 			postCache.Lock()
 			if len(postCache.items) > 0 {
 				name := postCache.items[0]
-				// Remove from cache immediately to prevent race conditions
 				postCache.items = postCache.items[1:]
 				postCache.Unlock()
 
@@ -523,7 +522,7 @@ func (reqr *PostRequester) Do(ctx context.Context) (bytes int64, err error) {
 	return int64(len(body)), result.Error()
 }
 
-// DeleteRequester handles DELETE requests - item already removed from cache during selection
+// DeleteRequester handles DELETE requests
 type DeleteRequester struct {
 	BaseRequester
 	podName string
