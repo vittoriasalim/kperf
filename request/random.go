@@ -465,17 +465,18 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 			postCache.Lock()
 			if len(postCache.items) > 0 {
 				name := postCache.items[0]
-				postCache.items = postCache.items[1:]
+				// Don't remove from cache yet - only remove if DELETE succeeds
 				postCache.Unlock()
 
 				comps = append(comps, b.resource, name)
 
-				return &DiscardRequester{
+				return &DeleteRequester{
 					BaseRequester: BaseRequester{
 						method: "DELETE",
 						req: cli.Delete().AbsPath(comps...).
 							MaxRetries(b.maxRetries),
 					},
+					podName: name,
 				}
 			}
 			postCache.Unlock()
@@ -515,6 +516,32 @@ func (reqr *PostRequester) Do(ctx context.Context) (bytes int64, err error) {
 	if result.Error() == nil {
 		postCache.Lock()
 		postCache.items = append(postCache.items, reqr.podName)
+		postCache.Unlock()
+	}
+
+	return int64(len(body)), result.Error()
+}
+
+// DeleteRequester handles DELETE requests and only removes from cache when DELETE succeeds
+type DeleteRequester struct {
+	BaseRequester
+	podName string
+}
+
+func (reqr *DeleteRequester) Do(ctx context.Context) (bytes int64, err error) {
+	result := reqr.req.Do(ctx)
+	body, _ := result.Raw()
+
+	// Only remove from cache if DELETE request was successful
+	if result.Error() == nil {
+		postCache.Lock()
+		// Find and remove the item from cache
+		for i, item := range postCache.items {
+			if item == reqr.podName {
+				postCache.items = append(postCache.items[:i], postCache.items[i+1:]...)
+				break
+			}
+		}
 		postCache.Unlock()
 	}
 
