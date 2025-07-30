@@ -459,7 +459,7 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 	shouldDelete := float64(randomFloat.Int64())/1000.0 < b.deleteRatio
 
 	if shouldDelete {
-		// DELETE operation - timeout if no item available
+		// DELETE operation - if timeout fall back to create
 		cacheRetries := 100
 		for i := 0; i < cacheRetries; i++ {
 			postCache.Lock()
