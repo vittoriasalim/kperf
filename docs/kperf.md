@@ -41,7 +41,7 @@ spec:
         resource: pods
       shares: 1000 # Has 50% chance = 1000 / (1000 + 1000)
     # quorumList means this list request without kube-apiserver cache.
-    - quorumList:S
+    - quorumList:
         version: v1
         resource: pods
         limit: 1000
