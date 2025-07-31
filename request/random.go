@@ -7,9 +7,9 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
-	"math"
 	"math/big"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Azure/kperf/api/types"
@@ -440,6 +440,9 @@ var (
 		sync.Mutex
 		items []string
 	}{}
+
+	// Global atomic counter for resource unique ID generation
+	resourceCounter int64
 )
 
 // Build implements RequestBuilder.Build.
@@ -490,11 +493,10 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 	// POST logic - create resource and add to cache if successful
 	comps = append(comps, b.resource)
 
-	// Generate unique pod name combining timestamp + 64bit random ID
-	timestamp := time.Now().UnixNano()                                             // nanoseconds since epoch (Go 1.13+)
-	randomNum, _ := rand.Int(rand.Reader, big.NewInt(0).SetUint64(math.MaxUint64)) // Full 64-bit positive random
-	uniqueID := fmt.Sprintf("%x-%x", timestamp, randomNum.Uint64())
-	name := fmt.Sprintf("%s-%s", b.namespace, uniqueID)
+	// Atomic counter for synchronized unique ID generation
+	counter := atomic.AddInt64(&resourceCounter, 1)
+	timestamp := time.Now().UnixNano()
+	name := fmt.Sprintf("%s-%d-%d", b.namespace, timestamp, counter)
 
 	body, _ := utils.RenderTemplate(b.resource, map[string]interface{}{
 		"namePattern": name,
