@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"math"
 	"math/big"
 	"sync"
 	"time"
@@ -455,8 +456,8 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 	}
 
 	// Random pick operation DELETE or CREATE based on deleteRatio probability
-	randomFloat, _ := rand.Int(rand.Reader, big.NewInt(1000))
-	shouldDelete := float64(randomFloat.Int64())/1000.0 < b.deleteRatio
+	randomInt, _ := rand.Int(rand.Reader, big.NewInt(1000))
+	shouldDelete := float64(randomInt.Int64())/1000.0 < b.deleteRatio
 
 	if shouldDelete {
 		// DELETE operation -
@@ -488,8 +489,12 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 
 	// POST logic - create resource and add to cache if successful
 	comps = append(comps, b.resource)
-	randomNum, _ := rand.Int(rand.Reader, big.NewInt(1000000))
-	name := fmt.Sprintf("%s-%d", b.namespace, randomNum.Int64())
+
+	// Generate unique pod name combining timestamp + 64bit random ID
+	timestamp := time.Now().UnixNano()                                             // nanoseconds since epoch (Go 1.13+)
+	randomNum, _ := rand.Int(rand.Reader, big.NewInt(0).SetUint64(math.MaxUint64)) // Full 64-bit positive random
+	uniqueID := fmt.Sprintf("%x-%x", timestamp, randomNum.Uint64())
+	name := fmt.Sprintf("%s-%s", b.namespace, uniqueID)
 
 	body, _ := utils.RenderTemplate(b.resource, map[string]interface{}{
 		"namePattern": name,

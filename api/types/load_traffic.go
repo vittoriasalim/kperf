@@ -386,8 +386,8 @@ func (r *RequestPostDel) Validate() error {
 		return fmt.Errorf("kube metadata: %v", err)
 	}
 
-	if r.DeleteRatio < 0 || r.DeleteRatio > 1 {
-		return fmt.Errorf("delete ratio must be between 0 and 1: %v", r.DeleteRatio)
+	if r.DeleteRatio < 0 || r.DeleteRatio > 0.5 {
+		return fmt.Errorf("delete ratio must be between 0 and 0.5: %v, create proportion should be greater than delete", r.DeleteRatio)
 	}
 
 	return nil
