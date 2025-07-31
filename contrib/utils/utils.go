@@ -537,3 +537,83 @@ func DeleteConfigmaps(ctx context.Context, kubeCfgPath string, namespace string,
 	return err
 
 }
+
+// Deploy jobs using template
+func DeployJobs(
+	ctx context.Context,
+	kubeCfgPath string,
+	releaseName string,
+	jobCount, podsPerJob, parallelism int,
+	namespace string,
+	deployTimeout time.Duration,
+) (cleanupFn func(), retErr error) {
+	infoLogger := log.GetLogger(ctx).WithKeyValues("level", "info")
+	warnLogger := log.GetLogger(ctx).WithKeyValues("level", "warn")
+
+	target := "workload/jobs"
+	ch, err := manifests.LoadChart(target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load %s chart: %w", target, err)
+	}
+
+	namePattern := releaseName
+
+	releaseCli, err := helmcli.NewReleaseCli(
+		kubeCfgPath,
+		namespace,
+		releaseName,
+		ch,
+		nil,
+		helmcli.StringPathValuesApplier(
+			fmt.Sprintf("namePattern=%s", namePattern),
+			fmt.Sprintf("jobCount=%d", jobCount),
+			fmt.Sprintf("podsPerJob=%d", podsPerJob),
+			fmt.Sprintf("parallelism=%d", parallelism),
+			fmt.Sprintf("namespace=%s", namespace),
+		),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create a new helm release cli: %w", err)
+	}
+
+	infoLogger.LogKV(
+		"msg", "deploying jobs",
+		"jobCount", jobCount,
+		"podsPerJob", podsPerJob,
+		"parallelism", parallelism,
+		"namespace", namespace,
+	)
+
+	// Create namespace if it doesn't exist
+	kr := NewKubectlRunner(kubeCfgPath, namespace)
+	err = kr.CreateNamespace(ctx, 2*time.Minute, namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create namespace %s: %w", namespace, err)
+	}
+
+	err = releaseCli.Deploy(ctx, deployTimeout)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			infoLogger.LogKV("msg", "deploy is canceled")
+			return func() {}, nil
+		}
+		return nil, fmt.Errorf("failed to deploy helm chart %s: %w", target, err)
+	}
+	infoLogger.LogKV("msg", "deployed jobs")
+
+	cleanupFn = func() {
+		// Cleanup helm chart first
+		err := releaseCli.Uninstall()
+		if err != nil {
+			warnLogger.LogKV("msg", "failed to cleanup helm chart", "error", err)
+		}
+
+		// Then cleanup namespace
+		err = kr.DeleteNamespace(context.TODO(), 5*time.Minute, namespace)
+		if err != nil {
+			warnLogger.LogKV("msg", "failed to cleanup namespace", "error", err)
+		}
+	}
+
+	return cleanupFn, nil
+}

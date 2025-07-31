@@ -1,0 +1,7 @@
+# Default values for job chart
+jobCount: 10
+podsPerJob: 1000
+parallelism: 100
+namespace: "benchmark-jobs"
+namePattern: "batchjob"
+ttlSecondsAfterFinished: 0
