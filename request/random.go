@@ -459,11 +459,7 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 	shouldDelete := float64(randomFloat.Int64())/1000.0 < b.deleteRatio
 
 	if shouldDelete {
-<<<<<<< Updated upstream
-		// DELETE operation - retrieve from cache
-=======
 		// DELETE operation -
->>>>>>> Stashed changes
 		cacheRetries := 100
 		for i := 0; i < cacheRetries; i++ {
 			postCache.Lock()
