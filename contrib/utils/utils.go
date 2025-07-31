@@ -119,7 +119,7 @@ func RepeatJobWithPod(ctx context.Context, kubeCfgPath string, namespace string,
 }
 
 // RenderTemplate renders a resource template to JSON for K8s API requests
-func RenderTemplate(resource string, name string, namespace string) ([]byte, error) {
+func RenderTemplate(resource string, values map[string]interface{}) ([]byte, error) {
 	// Resource template
 	// TODO: add more template for resource
 	templatePaths := map[string]string{
@@ -142,7 +142,7 @@ func RenderTemplate(resource string, name string, namespace string) ([]byte, err
 
 	var buf bytes.Buffer
 	err = tmpl.Execute(&buf, map[string]interface{}{
-		"Values": map[string]interface{}{"namePattern": name, "namespace": namespace},
+		"Values": values,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute template: %w", err)

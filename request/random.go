@@ -459,7 +459,11 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 	shouldDelete := float64(randomFloat.Int64())/1000.0 < b.deleteRatio
 
 	if shouldDelete {
+<<<<<<< Updated upstream
 		// DELETE operation - retrieve from cache
+=======
+		// DELETE operation -
+>>>>>>> Stashed changes
 		cacheRetries := 100
 		for i := 0; i < cacheRetries; i++ {
 			postCache.Lock()
@@ -491,7 +495,10 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 	randomNum, _ := rand.Int(rand.Reader, big.NewInt(1000000))
 	name := fmt.Sprintf("%s-%d", b.namespace, randomNum.Int64())
 
-	body, _ := utils.RenderTemplate(b.resource, name, b.namespace)
+	body, _ := utils.RenderTemplate(b.resource, map[string]interface{}{
+		"namePattern": name,
+		"namespace":   b.namespace,
+	})
 	return &PostRequester{
 		BaseRequester: BaseRequester{
 			method: "POST",
