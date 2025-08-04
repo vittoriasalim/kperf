@@ -423,7 +423,7 @@ type requestPostDelBuilder struct {
 	deleteRatio     float64
 	maxRetries      int
 
-	// Per-builder cache for this specific resource/namespace combination
+	// Per-builder cache for created resources
 	cache *Cache
 
 	// Per-builder atomic counter for unique ID generation
