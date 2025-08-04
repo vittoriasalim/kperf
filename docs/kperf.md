@@ -7,6 +7,7 @@ This document provides instructions for testing and using kperf to benchmark Kub
 ### kperf runner run
 
 The `kperf runner run` command generates requests from the endpoint where the command is executed. All requests are generated based on a load profile configuration.
+
 Example load profile (`/tmp/example-loadprofile.yaml`):
 
 ```yaml
