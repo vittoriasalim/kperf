@@ -363,6 +363,7 @@ type requestPatchBuilder struct {
 	resourceVersion string
 	namespace       string
 	name            string
+	keySpaceSize    int
 	patchType       apitypes.PatchType
 	body            interface{}
 	maxRetries      int
@@ -380,6 +381,7 @@ func newRequestPatchBuilder(src *types.RequestPatch, resourceVersion string, max
 		resourceVersion: resourceVersion,
 		namespace:       src.Namespace,
 		name:            src.Name,
+		keySpaceSize:    src.KeySpaceSize,
 		patchType:       patchType,
 		body:            []byte(src.Body),
 		maxRetries:      maxRetries,
@@ -398,7 +400,13 @@ func (b *requestPatchBuilder) Build(cli rest.Interface) Requester {
 	if b.namespace != "" {
 		comps = append(comps, "namespaces", b.namespace)
 	}
-	comps = append(comps, b.resource, b.name)
+	// Generate random suffix based on keySpaceSize
+    randomInt, _ := rand.Int(rand.Reader, big.NewInt(int64(b.keySpaceSize)))
+    suffix := randomInt.Int64()
+    
+    // Create final resource name: name-{suffix}
+    finalName := fmt.Sprintf("%s-%d", b.name, suffix)
+	comps = append(comps, b.resource, finalName)
 
 	return &DiscardRequester{
 		BaseRequester: BaseRequester{

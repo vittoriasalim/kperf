@@ -7,7 +7,7 @@ This document provides instructions for testing and using kperf to benchmark Kub
 ### kperf runner run
 
 The `kperf runner run` command generates requests from the endpoint where the command is executed. All requests are generated based on a load profile configuration.
-
+p
 Example load profile (`/tmp/example-loadprofile.yaml`):
 
 ```yaml
@@ -45,7 +45,7 @@ spec:
         version: v1
         resource: pods
         limit: 1000
-      shares: 1000 # Has 50% chance = 1000 / (1000 + 1000)
+      shares: 1000 # Has 50% chance vim= 1000 / (1000 + 1000)
 ```
 
 This profile generates two types of requests:
