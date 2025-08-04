@@ -159,7 +159,7 @@ type RequestPatch struct {
 	KubeGroupVersionResource `yaml:",inline"`
 	// Namespace is object's namespace.
 	Namespace string `json:"namespace" yaml:"namespace"`
-	// Name is object's name Pattern e.g keprf-{suffix index}.
+	// Name is object's name Pattern e.g kperf-{suffix index}.
 	Name string `json:"name" yaml:"name"`
 	// KeySpaceSize is used to generate random number as name's suffix.
 	KeySpaceSize int `json:"keySpaceSize" yaml:"keySpaceSize"`
