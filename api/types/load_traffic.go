@@ -159,8 +159,10 @@ type RequestPatch struct {
 	KubeGroupVersionResource `yaml:",inline"`
 	// Namespace is object's namespace.
 	Namespace string `json:"namespace" yaml:"namespace"`
-	// Name is object's prefix name.
+	// Name is object's Name Pattern e.g {name}-{suffix index}.
 	Name string `json:"name" yaml:"name"`
+	// KeySpaceSize is used to generate random number as name's suffix.
+	KeySpaceSize int `json:"keySpaceSize" yaml:"keySpaceSize"`
 	// PatchType is the type of patch, e.g. "json", "merge", "strategic-merge".
 	PatchType string `json:"patchType" yaml:"patchType"`
 	// Body is the request body, for fields to be changed.
