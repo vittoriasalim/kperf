@@ -424,35 +424,10 @@ type requestPostDelBuilder struct {
 	maxRetries      int
 
 	// Per-builder cache for this specific resource/namespace combination
-	cache struct {
-		sync.Mutex
-		items []string
-	}
+	cache *Cache
 
 	// Per-builder atomic counter for unique ID generation
 	resourceCounter int64
-}
-
-// pop removes and returns the first item from the cache.
-// Returns empty string and false if cache is empty.
-func (b *requestPostDelBuilder) pop() (string, bool) {
-	b.cache.Lock()
-	defer b.cache.Unlock()
-
-	if len(b.cache.items) == 0 {
-		return "", false
-	}
-
-	name := b.cache.items[0]
-	b.cache.items = b.cache.items[1:]
-	return name, true
-}
-
-// push adds an item to the cache.
-func (b *requestPostDelBuilder) push(name string) {
-	b.cache.Lock()
-	defer b.cache.Unlock()
-	b.cache.items = append(b.cache.items, name)
 }
 
 func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string, maxRetries int) *requestPostDelBuilder {
@@ -463,6 +438,7 @@ func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string,
 		namespace:       src.Namespace,
 		deleteRatio:     src.DeleteRatio,
 		maxRetries:      maxRetries,
+		cache:           InitCache(), // Initialize the cache
 	}
 }
 
@@ -484,7 +460,7 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 
 	if shouldDelete {
 		// Try to get a name from cache
-		if name, ok := b.pop(); ok {
+		if name, ok := b.cache.Pop(); ok {
 			comps = append(comps, b.resource, name)
 
 			return &PostDelDiscardRequester{
@@ -545,13 +521,13 @@ func (reqr *PostDelDiscardRequester) Do(ctx context.Context) (bytes int64, err e
 	case "POST":
 		// Only add to cache if POST request was successful
 		if err == nil {
-			reqr.builder.push(reqr.name)
+			reqr.builder.cache.Push(reqr.name)
 		}
 	case "DELETE":
 		// If DELETE request failed, restore the item back to cache
 		// since the resource still exists in Kubernetes
 		if err != nil {
-			reqr.builder.push(reqr.name)
+			reqr.builder.cache.Push(reqr.name)
 		}
 	}
 
