@@ -422,6 +422,15 @@ type requestPostDelBuilder struct {
 	namespace       string
 	deleteRatio     float64
 	maxRetries      int
+
+	// Per-builder cache for this specific resource/namespace combination
+	cache struct {
+		sync.Mutex
+		items []string
+	}
+
+	// Per-builder atomic counter for unique ID generation
+	resourceCounter int64
 }
 
 func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string, maxRetries int) *requestPostDelBuilder {
@@ -434,16 +443,6 @@ func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string,
 		maxRetries:      maxRetries,
 	}
 }
-
-var (
-	postCache = struct {
-		sync.Mutex
-		items []string
-	}{}
-
-	// Global atomic counter for resource unique ID generation
-	resourceCounter int64
-)
 
 // Build implements RequestBuilder.Build.
 func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
@@ -458,99 +457,94 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 		comps = append(comps, "namespaces", b.namespace)
 	}
 
-	// Random pick operation DELETE or CREATE based on deleteRatio probability
+	// Random pick operation DELETE or CREATE based on deleteRatio weight probability
 	randomInt, _ := rand.Int(rand.Reader, big.NewInt(1000))
 	shouldDelete := float64(randomInt.Int64())/1000.0 < b.deleteRatio
 
 	if shouldDelete {
-		// DELETE operation -
-		cacheRetries := 100
-		for i := 0; i < cacheRetries; i++ {
-			postCache.Lock()
-			if len(postCache.items) > 0 {
-				name := postCache.items[0]
-				postCache.items = postCache.items[1:]
-				postCache.Unlock()
 
-				comps = append(comps, b.resource, name)
+		b.cache.Lock()
+		if len(b.cache.items) > 0 {
+			name := b.cache.items[0]
+			b.cache.items = b.cache.items[1:]
+			b.cache.Unlock()
 
-				return &DeleteRequester{
+			comps = append(comps, b.resource, name)
+
+			return &PostDelDiscardRequester{
+				builder:   b,
+				name:      name,
+				operation: "DELETE",
+				DiscardRequester: DiscardRequester{
 					BaseRequester: BaseRequester{
 						method: "DELETE",
 						req: cli.Delete().AbsPath(comps...).
 							MaxRetries(b.maxRetries),
 					},
-					podName: name,
-				}
+				},
 			}
-			postCache.Unlock()
-			// Brief wait before checking again
-			time.Sleep(10 * time.Millisecond)
 		}
-		// If we reach here, fall back to POST after timeout
+		b.cache.Unlock()
+		// If we reach here, fall back to POST
 	}
 
 	// POST logic - create resource and add to cache if successful
 	comps = append(comps, b.resource)
 
-	// Atomic counter for synchronized unique ID generation
-	counter := atomic.AddInt64(&resourceCounter, 1)
+	// Use builder's atomic counter for synchronized unique ID generation
+	counter := atomic.AddInt64(&b.resourceCounter, 1)
 	timestamp := time.Now().UnixNano()
-	name := fmt.Sprintf("%s-%d-%d", b.namespace, timestamp, counter)
+	name := fmt.Sprintf("%s-%s-%d-%d", b.resource, b.namespace, timestamp, counter)
 
 	body, _ := utils.RenderTemplate(b.resource, map[string]interface{}{
 		"namePattern": name,
 		"namespace":   b.namespace,
 	})
-	return &PostRequester{
-		BaseRequester: BaseRequester{
-			method: "POST",
-			req:    cli.Post().AbsPath(comps...).Body(body).MaxRetries(b.maxRetries),
+
+	return &PostDelDiscardRequester{
+		builder:   b,
+		name:      name,
+		operation: "POST",
+		DiscardRequester: DiscardRequester{
+			BaseRequester: BaseRequester{
+				method: "POST",
+				req:    cli.Post().AbsPath(comps...).Body(body).MaxRetries(b.maxRetries),
+			},
 		},
-		podName: name,
+	}
+}
+
+// PostDelDiscardRequester handles both POST and DELETE requests with cache management
+type PostDelDiscardRequester struct {
+	builder   *requestPostDelBuilder
+	name      string
+	operation string // "POST" or "DELETE"
+	DiscardRequester
+}
+
+func (reqr *PostDelDiscardRequester) Do(ctx context.Context) (bytes int64, err error) {
+	// Use DiscardRequester's Do method to discard response body
+	bytes, err = reqr.DiscardRequester.Do(ctx)
+
+	switch reqr.operation {
+	case "POST":
+		// Only add to cache if POST request was successful
+		if err == nil {
+			reqr.builder.cache.Lock()
+			reqr.builder.cache.items = append(reqr.builder.cache.items, reqr.name)
+			reqr.builder.cache.Unlock()
+		}
+	case "DELETE":
+		// If DELETE request failed, restore the item back to cache
+		// since the resource still exists in Kubernetes
+		if err != nil {
+			reqr.builder.cache.Lock()
+			reqr.builder.cache.items = append(reqr.builder.cache.items, reqr.name)
+			reqr.builder.cache.Unlock()
+		}
 	}
 
-}
-
-// PostRequester handles POST requests and only adds to cache when POST succeeds
-type PostRequester struct {
-	BaseRequester
-	podName string
-}
-
-func (reqr *PostRequester) Do(ctx context.Context) (bytes int64, err error) {
-	result := reqr.req.Do(ctx)
-	body, _ := result.Raw()
-
-	// Only add to cache if POST request was successful
-	if result.Error() == nil {
-		postCache.Lock()
-		postCache.items = append(postCache.items, reqr.podName)
-		postCache.Unlock()
-	}
-
-	return int64(len(body)), result.Error()
-}
-
-// DeleteRequester handles DELETE requests
-type DeleteRequester struct {
-	BaseRequester
-	podName string
-}
-
-func (reqr *DeleteRequester) Do(ctx context.Context) (bytes int64, err error) {
-	result := reqr.req.Do(ctx)
-	body, _ := result.Raw()
-
-	// If DELETE request failed, restore the item back to cache
-	// since the pod still exists in Kubernetes
-	if result.Error() != nil {
-		postCache.Lock()
-		postCache.items = append(postCache.items, reqr.podName)
-		postCache.Unlock()
-	}
-
-	return int64(len(body)), result.Error()
+	return bytes, err
 }
 
 func toPtr[T any](v T) *T {
