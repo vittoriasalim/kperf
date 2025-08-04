@@ -433,6 +433,28 @@ type requestPostDelBuilder struct {
 	resourceCounter int64
 }
 
+// pop removes and returns the first item from the cache.
+// Returns empty string and false if cache is empty.
+func (b *requestPostDelBuilder) pop() (string, bool) {
+	b.cache.Lock()
+	defer b.cache.Unlock()
+
+	if len(b.cache.items) == 0 {
+		return "", false
+	}
+
+	name := b.cache.items[0]
+	b.cache.items = b.cache.items[1:]
+	return name, true
+}
+
+// push adds an item to the cache.
+func (b *requestPostDelBuilder) push(name string) {
+	b.cache.Lock()
+	defer b.cache.Unlock()
+	b.cache.items = append(b.cache.items, name)
+}
+
 func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string, maxRetries int) *requestPostDelBuilder {
 	return &requestPostDelBuilder{
 		version:         schema.GroupVersion{Group: src.Group, Version: src.Version},
@@ -446,7 +468,6 @@ func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string,
 
 // Build implements RequestBuilder.Build.
 func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
-
 	comps := make([]string, 0, 5)
 	if b.version.Group == "" {
 		comps = append(comps, "api", b.version.Version)
@@ -462,13 +483,8 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 	shouldDelete := float64(randomInt.Int64())/1000.0 < b.deleteRatio
 
 	if shouldDelete {
-
-		b.cache.Lock()
-		if len(b.cache.items) > 0 {
-			name := b.cache.items[0]
-			b.cache.items = b.cache.items[1:]
-			b.cache.Unlock()
-
+		// Try to get a name from cache
+		if name, ok := b.pop(); ok {
 			comps = append(comps, b.resource, name)
 
 			return &PostDelDiscardRequester{
@@ -484,8 +500,7 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 				},
 			}
 		}
-		b.cache.Unlock()
-		// If we reach here, fall back to POST
+		// If cache is empty, fall through to POST
 	}
 
 	// POST logic - create resource and add to cache if successful
@@ -530,17 +545,13 @@ func (reqr *PostDelDiscardRequester) Do(ctx context.Context) (bytes int64, err e
 	case "POST":
 		// Only add to cache if POST request was successful
 		if err == nil {
-			reqr.builder.cache.Lock()
-			reqr.builder.cache.items = append(reqr.builder.cache.items, reqr.name)
-			reqr.builder.cache.Unlock()
+			reqr.builder.push(reqr.name)
 		}
 	case "DELETE":
 		// If DELETE request failed, restore the item back to cache
 		// since the resource still exists in Kubernetes
 		if err != nil {
-			reqr.builder.cache.Lock()
-			reqr.builder.cache.items = append(reqr.builder.cache.items, reqr.name)
-			reqr.builder.cache.Unlock()
+			reqr.builder.push(reqr.name)
 		}
 	}
 
