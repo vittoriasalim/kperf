@@ -9,8 +9,11 @@ import (
 	"fmt"
 	"math/big"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/Azure/kperf/api/types"
+	"github.com/Azure/kperf/contrib/utils"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -59,6 +62,8 @@ func NewWeightedRandomRequests(spec *types.LoadProfileSpec) (*WeightedRandomRequ
 			builder = newRequestGetPodLogBuilder(r.GetPodLog, spec.MaxRetries)
 		case r.Patch != nil:
 			builder = newRequestPatchBuilder(r.Patch, "", spec.MaxRetries)
+		case r.PostDel != nil:
+			builder = newRequestPostDelBuilder(r.PostDel, "", spec.MaxRetries)
 		default:
 			return nil, fmt.Errorf("not implement for PUT yet")
 		}
@@ -416,6 +421,125 @@ func (b *requestPatchBuilder) Build(cli rest.Interface) Requester {
 				MaxRetries(b.maxRetries),
 		},
 	}
+}
+
+type requestPostDelBuilder struct {
+	version         schema.GroupVersion
+	resource        string
+	resourceVersion string
+	namespace       string
+	deleteRatio     float64
+	maxRetries      int
+
+	// Per-builder cache for created resources
+	cache *Cache
+
+	// Per-builder atomic counter for unique ID generation
+	resourceCounter int64
+}
+
+func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string, maxRetries int) *requestPostDelBuilder {
+	return &requestPostDelBuilder{
+		version:         schema.GroupVersion{Group: src.Group, Version: src.Version},
+		resource:        src.Resource,
+		resourceVersion: resourceVersion,
+		namespace:       src.Namespace,
+		deleteRatio:     src.DeleteRatio,
+		maxRetries:      maxRetries,
+		cache:           InitCache(), // Initialize the cache
+	}
+}
+
+// Build implements RequestBuilder.Build.
+func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
+	comps := make([]string, 0, 5)
+	if b.version.Group == "" {
+		comps = append(comps, "api", b.version.Version)
+	} else {
+		comps = append(comps, "apis", b.version.Group, b.version.Version)
+	}
+	if b.namespace != "" {
+		comps = append(comps, "namespaces", b.namespace)
+	}
+
+	// Random pick operation DELETE or CREATE based on deleteRatio weight probability
+	randomInt, _ := rand.Int(rand.Reader, big.NewInt(1000))
+	shouldDelete := float64(randomInt.Int64())/1000.0 < b.deleteRatio
+
+	if shouldDelete {
+		// Try to get a name from cache
+		if name, ok := b.cache.Pop(); ok {
+			comps = append(comps, b.resource, name)
+
+			return &PostDelDiscardRequester{
+				builder:   b,
+				name:      name,
+				operation: "DELETE",
+				DiscardRequester: DiscardRequester{
+					BaseRequester: BaseRequester{
+						method: "DELETE",
+						req: cli.Delete().AbsPath(comps...).
+							MaxRetries(b.maxRetries),
+					},
+				},
+			}
+		}
+		// If cache is empty, fall through to POST
+	}
+
+	// POST logic - create resource and add to cache if successful
+	comps = append(comps, b.resource)
+
+	// Use builder's atomic counter for synchronized unique ID generation
+	counter := atomic.AddInt64(&b.resourceCounter, 1)
+	timestamp := time.Now().UnixNano()
+	name := fmt.Sprintf("%s-%s-%d-%d", b.resource, b.namespace, timestamp, counter)
+
+	body, _ := utils.RenderTemplate(b.resource, map[string]interface{}{
+		"namePattern": name,
+		"namespace":   b.namespace,
+	})
+
+	return &PostDelDiscardRequester{
+		builder:   b,
+		name:      name,
+		operation: "POST",
+		DiscardRequester: DiscardRequester{
+			BaseRequester: BaseRequester{
+				method: "POST",
+				req:    cli.Post().AbsPath(comps...).Body(body).MaxRetries(b.maxRetries),
+			},
+		},
+	}
+}
+
+// PostDelDiscardRequester handles both POST and DELETE requests with cache management
+type PostDelDiscardRequester struct {
+	builder   *requestPostDelBuilder
+	name      string
+	operation string // "POST" or "DELETE"
+	DiscardRequester
+}
+
+func (reqr *PostDelDiscardRequester) Do(ctx context.Context) (bytes int64, err error) {
+	// Use DiscardRequester's Do method to discard response body
+	bytes, err = reqr.DiscardRequester.Do(ctx)
+
+	switch reqr.operation {
+	case "POST":
+		// Only add to cache if POST request was successful
+		if err == nil {
+			reqr.builder.cache.Push(reqr.name)
+		}
+	case "DELETE":
+		// If DELETE request failed, restore the item back to cache
+		// since the resource still exists in Kubernetes
+		if err != nil {
+			reqr.builder.cache.Push(reqr.name)
+		}
+	}
+
+	return bytes, err
 }
 
 func toPtr[T any](v T) *T {
