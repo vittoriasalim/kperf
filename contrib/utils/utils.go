@@ -124,6 +124,7 @@ func RenderTemplate(resource string, values map[string]interface{}) ([]byte, err
 	// TODO: add more template for resource
 	templatePaths := map[string]string{
 		"pods": "workload/pods/templates/pod.tpl",
+		"configmaps": "workload/configmaps/templates/configmap.tpl",
 	}
 	templatePath, ok := templatePaths[resource]
 	if !ok {

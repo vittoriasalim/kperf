@@ -62,10 +62,12 @@ func NewWeightedRandomRequests(spec *types.LoadProfileSpec) (*WeightedRandomRequ
 			builder = newRequestGetPodLogBuilder(r.GetPodLog, spec.MaxRetries)
 		case r.Patch != nil:
 			builder = newRequestPatchBuilder(r.Patch, "", spec.MaxRetries)
+		case r.Put != nil:
+			builder = newRequestPutBuilder(r.Put, "", spec.MaxRetries)
 		case r.PostDel != nil:
 			builder = newRequestPostDelBuilder(r.PostDel, "", spec.MaxRetries)
 		default:
-			return nil, fmt.Errorf("not implement for PUT yet")
+			return nil, fmt.Errorf("empty request value")
 		}
 		reqBuilders = append(reqBuilders, builder)
 	}
@@ -418,6 +420,71 @@ func (b *requestPatchBuilder) Build(cli rest.Interface) Requester {
 			method: "PATCH",
 			req: cli.Patch(b.patchType).AbsPath(comps...).
 				Body(b.body).
+				MaxRetries(b.maxRetries),
+		},
+	}
+}
+
+type requestPutBuilder struct {
+	version         schema.GroupVersion
+	resource        string
+	resourceVersion string
+	namespace       string
+	name            string
+	keySpaceSize    int
+	valueSize       int
+	maxRetries      int
+}
+
+func newRequestPutBuilder(src *types.RequestPut, resourceVersion string, maxRetries int) *requestPutBuilder {
+
+	return &requestPutBuilder{
+		version: schema.GroupVersion{
+			Group:   src.Group,
+			Version: src.Version,
+		},
+		resource:        src.Resource,
+		resourceVersion: resourceVersion,
+		namespace:       src.Namespace,
+		name:            src.Name,
+		keySpaceSize:    src.KeySpaceSize,
+		valueSize:       src.ValueSize,
+		maxRetries:      maxRetries,
+	}
+}
+
+// Build implements RequestBuilder.Build.
+func (b *requestPutBuilder) Build(cli rest.Interface) Requester {
+	// https://kubernetes.io/docs/reference/using-api/#api-groups
+	comps := make([]string, 0, 5)
+	if b.version.Group == "" {
+		comps = append(comps, "api", b.version.Version)
+	} else {
+		comps = append(comps, "apis", b.version.Group, b.version.Version)
+	}
+	if b.namespace != "" {
+		comps = append(comps, "namespaces", b.namespace)
+	}
+	// Generate random suffix based on keySpaceSize
+	randomInt, _ := rand.Int(rand.Reader, big.NewInt(int64(b.keySpaceSize)))
+	suffix := randomInt.Int64()
+
+	// Create final resource name: name-{suffix}
+	finalName := fmt.Sprintf("%s-%d", b.name, suffix)
+	comps = append(comps, b.resource, finalName)
+
+	// Generate body using template
+	body, _ := utils.RenderTemplate(b.resource, map[string]interface{}{
+		"namePattern": finalName,
+		"namespace":   b.namespace,
+		"valueSize":   b.valueSize,
+	})
+
+	return &DiscardRequester{
+		BaseRequester: BaseRequester{
+			method: "PUT",
+			req: cli.Put().AbsPath(comps...).
+				Body(body).
 				MaxRetries(b.maxRetries),
 		},
 	}
