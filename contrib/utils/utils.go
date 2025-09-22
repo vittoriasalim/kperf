@@ -6,9 +6,11 @@ package utils
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"os"
 	"sort"
@@ -39,7 +41,27 @@ var (
 	// provider ID for all the virtual nodes so that EKS cloud provider
 	// won't delete our virtual nodes.
 	EKSIdleNodepoolInstanceType = "m4.large"
+
+	// letterRunes contains the alphabet for random string generation
+	letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
 )
+
+// randString generates a random string of specified length
+func randString(n int) (string, error) {
+	if n <= 0 {
+		return "", fmt.Errorf("length must be positive")
+	}
+
+	b := make([]rune, n)
+	for i := range b {
+		random, err := rand.Int(rand.Reader, big.NewInt(int64(len(letterRunes))))
+		if err != nil {
+			return "", fmt.Errorf("error generating random number: %w", err)
+		}
+		b[i] = letterRunes[int(random.Int64())]
+	}
+	return string(b), nil
+}
 
 // RepeatJobWithPod repeats to deploy 3k pods.
 func RepeatJobWithPod(ctx context.Context, kubeCfgPath string, namespace string,
@@ -123,12 +145,23 @@ func RenderTemplate(resource string, values map[string]interface{}) ([]byte, err
 	// Resource template
 	// TODO: add more template for resource
 	templatePaths := map[string]string{
-		"pods": "workload/pods/templates/pod.tpl",
+		"pods":       "workload/pods/templates/pod.tpl",
 		"configmaps": "workload/configmaps/templates/configmap.tpl",
 	}
 	templatePath, ok := templatePaths[resource]
 	if !ok {
 		return nil, fmt.Errorf("unsupported resource type: %s", resource)
+	}
+
+	// For configmaps, generate random data if valueSize is specified
+	if resource == "configmaps" {
+		if valueSize, ok := values["valueSize"].(int); ok && valueSize > 0 {
+			randomData, err := randString(valueSize)
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate random data: %w", err)
+			}
+			values["randomData"] = randomData
+		}
 	}
 
 	templateContent, err := manifests.FS.ReadFile(templatePath)
