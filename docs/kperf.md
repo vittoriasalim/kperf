@@ -60,7 +60,7 @@ kperf -v 3 runner run --config /tmp/example-loadprofile.yaml
 
 The result shows percentile latencies and provides latency details for each request type.
 
-> **Note**: Use `kperf runner run -h` to see more options.
+*Note**: Use `kperf runner run -h` to see more options.
 
 ### kperf runnergroup
 

@@ -47,7 +47,7 @@ var (
 )
 
 // randString generates a random string of specified length
-func randString(n int) (string, error) {
+func RandString(n int) (string, error) {
 	if n <= 0 {
 		return "", fmt.Errorf("length must be positive")
 	}
@@ -153,10 +153,9 @@ func RenderTemplate(resource string, values map[string]interface{}) ([]byte, err
 		return nil, fmt.Errorf("unsupported resource type: %s", resource)
 	}
 
-	// For configmaps, generate random data if valueSize is specified
 	if resource == "configmaps" {
 		if valueSize, ok := values["valueSize"].(int); ok && valueSize > 0 {
-			randomData, err := randString(valueSize)
+			randomData, err := RandString(valueSize)
 			if err != nil {
 				return nil, fmt.Errorf("failed to generate random data: %w", err)
 			}

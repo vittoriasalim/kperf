@@ -105,6 +105,7 @@ type RequestGet struct {
 	Namespace string `json:"namespace" yaml:"namespace"`
 	// Name is object's name.
 	Name string `json:"name" yaml:"name"`
+	KeySpaceSize int `json:"keySpaceSize" yaml:"keySpaceSize"`
 }
 
 // RequestList defines LIST request for target objects.
@@ -161,6 +162,8 @@ type RequestPatch struct {
 	Name string `json:"name" yaml:"name"`
 	// KeySpaceSize is used to generate random number as name's suffix.
 	KeySpaceSize int `json:"keySpaceSize" yaml:"keySpaceSize"`
+	// ValueSize is the object's size in bytes.
+	ValueSize int `json:"valueSize" yaml:"valueSize"`
 }
 
 // RequestGetPodLog defines GetLog request for target pod.
@@ -183,6 +186,7 @@ type RequestPostDel struct {
 	KubeGroupVersionResource `yaml:",inline"`
 	Namespace                string  `json:"namespace" yaml:"namespace"`
 	DeleteRatio              float64 `json:"deleteRatio" yaml:"deleteRatio"`
+	ValueSize                int     `json:"valueSize" yaml:"valueSize"`
 }
 
 // Validate verifies fields of LoadProfile.

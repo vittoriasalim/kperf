@@ -150,6 +150,7 @@ type requestGetBuilder struct {
 	resource        string
 	namespace       string
 	name            string
+	keySpaceSize int
 	resourceVersion string
 	maxRetries      int
 }
@@ -164,6 +165,7 @@ func newRequestGetBuilder(src *types.RequestGet, resourceVersion string, maxRetr
 		namespace:       src.Namespace,
 		name:            src.Name,
 		resourceVersion: resourceVersion,
+		keySpaceSize: src.KeySpaceSize,
 		maxRetries:      maxRetries,
 	}
 }
@@ -180,7 +182,12 @@ func (b *requestGetBuilder) Build(cli rest.Interface) Requester {
 	if b.namespace != "" {
 		comps = append(comps, "namespaces", b.namespace)
 	}
-	comps = append(comps, b.resource, b.name)
+	finalName := b.name
+	if b.keySpaceSize > 0 {
+		randomInt, _ := rand.Int(rand.Reader, big.NewInt(int64(b.keySpaceSize)))
+		finalName = fmt.Sprintf("%s-%d", b.name, randomInt.Int64())
+	}
+	comps = append(comps, b.resource, finalName)
 
 	return &DiscardRequester{
 		BaseRequester: BaseRequester{
@@ -370,6 +377,7 @@ type requestPatchBuilder struct {
 	namespace    string
 	name         string
 	keySpaceSize int
+	valueSize    int
 	maxRetries   int
 }
 
@@ -383,6 +391,7 @@ func newRequestPatchBuilder(src *types.RequestPatch, maxRetries int) *requestPat
 		namespace:    src.Namespace,
 		name:         src.Name,
 		keySpaceSize: src.KeySpaceSize,
+		valueSize:    src.ValueSize,
 		maxRetries:   maxRetries,
 	}
 }
@@ -407,13 +416,24 @@ func (b *requestPatchBuilder) Build(cli rest.Interface) Requester {
 	finalName := fmt.Sprintf("%s-%d", b.name, suffix)
 	comps = append(comps, b.resource, finalName)
 
-	body := fmt.Sprintf(`{"metadata":{"annotations":{"force-update":"%d-%d"}}}`, suffix, time.Now().UnixNano())
+	var body []byte
+
+	// Generate appropriate patch body based on resource type and valueSize
+	if b.resource == "configmaps" && b.valueSize > 0 {
+		// Generate random data for configmap patch
+		randomData, _ := utils.RandString(b.valueSize)
+
+		body = []byte(fmt.Sprintf(`{"data":{"data-key":"%s"}}`, randomData))
+	} else {
+		// Fallback to simple annotation update
+		body = []byte(fmt.Sprintf(`{"metadata":{"annotations":{"force-update":"%d-%d"}}}`, suffix, time.Now().UnixNano()))
+	}
 
 	return &DiscardRequester{
 		BaseRequester: BaseRequester{
 			method: "PATCH",
 			req: cli.Patch(apitypes.MergePatchType).AbsPath(comps...).
-				Body([]byte(body)).
+				Body(body).
 				MaxRetries(b.maxRetries),
 		},
 	}
@@ -490,6 +510,7 @@ type requestPostDelBuilder struct {
 	resourceVersion string
 	namespace       string
 	deleteRatio     float64
+	valueSize       int
 	maxRetries      int
 
 	// Per-builder cache for created resources
@@ -506,6 +527,7 @@ func newRequestPostDelBuilder(src *types.RequestPostDel, resourceVersion string,
 		resourceVersion: resourceVersion,
 		namespace:       src.Namespace,
 		deleteRatio:     src.DeleteRatio,
+		valueSize:       src.ValueSize,
 		maxRetries:      maxRetries,
 		cache:           InitCache(), // Initialize the cache
 	}
@@ -559,6 +581,7 @@ func (b *requestPostDelBuilder) Build(cli rest.Interface) Requester {
 	body, _ := utils.RenderTemplate(b.resource, map[string]interface{}{
 		"namePattern": name,
 		"namespace":   b.namespace,
+		"valueSize":   b.valueSize,
 	})
 
 	return &PostDelDiscardRequester{
